@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.repo-to-graph/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+.env*.local
+.npm
+.eslintcache
+
+# Project Databases & Code Workspace
+repo_to_graph.db
+scanned_repos/
+
+# IDEs & System
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+Thumbs.db

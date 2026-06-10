@@ -1,0 +1,31 @@
+# Task List - repo-to-graph
+
+- `[x]` Step 1: Initialize Workspace & Backend Setup
+  - `[x]` Create project directory structure (`backend`, `frontend`, `docs`)
+  - `[x]` Create `backend/requirements.txt` with required dependencies
+  - `[x]` Define SQLAlchemy models for SQLite (Relational and Graph tables)
+  - `[x]` Set up database session helper and migrations
+  - `[x]` Initialize FastAPI main application and basic health checks
+- `[x]` Step 2: Tree-Sitter Parser Integration
+  - `[x]` Write base parser class (`backend/app/parsers/base.py`)
+  - `[x]` Implement Python parser (`backend/app/parsers/python.py`)
+  - `[x]` Implement JS/TS parser (`backend/app/parsers/javascript.py` and `typescript.py`)
+  - `[x]` Implement repository cloner and scanner service
+- `[x]` Step 3: Graph Generator & Traversal Algorithms
+  - `[x]` Implement graph writer in SQLite
+  - `[x]` Write recursive algorithms for caller/callee trees and call depths
+  - `[x]` Write circular dependency detection (directed cycle finder)
+  - `[x]` Write upstream/downstream impact analysis
+- `[x]` Step 4: Backend API Endpoints
+  - `[x]` CRUD APIs for Repositories and Scan Runs
+  - `[x]` Graph fetching and querying APIs (supports filters/depths)
+  - `[x]` Global Search API
+- `[x]` Step 5: Frontend - Next.js Setup
+  - `[x]` Create Next.js 15 project in `frontend/`
+  - `[x]` Install React Flow and component dependencies
+  - `[x]` Apply custom, premium dark-mode styling
+- `[x]` Step 6: Interactive UI Components
+  - `[x]` Dashboard / repo importing UI
+  - `[x]` React Flow Graph canvas with custom node stylings (File, Class, Function, API)
+  - `[x]` Sidebar with search, circular dependency warning panel, and impact score
+  - `[x]` Node details and source code viewer panel
