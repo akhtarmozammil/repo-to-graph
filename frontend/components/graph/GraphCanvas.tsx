@@ -138,6 +138,9 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
   // Hover states to highlight paths
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
+  // Fade out state for layout snap restoration
+  const [isFadingOut, setIsFadingOut] = useState(false);
+
   // Apply layout and transform to React Flow state
   useEffect(() => {
     const apis = nodes.filter(n => n.type === 'api');
@@ -403,13 +406,17 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
 
   // fitView when selectedNodeId changes (isolation mode or restoring last position)
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (!selectedNodeId) {
-        // Selection cleared! Restore to the saved viewport if we have one
+    if (!selectedNodeId) {
+      // Selection cleared! Trigger quick fade-out
+      setIsFadingOut(true);
+
+      // Wait 100ms for fade-out to complete before snapping layout/viewport
+      const timerSnap = setTimeout(() => {
+        // 1. Snap camera back to saved viewport instantly
         if (savedViewportRef.current) {
-          setViewport(savedViewportRef.current, { duration: 250 });
+          setViewport(savedViewportRef.current, { duration: 0 });
         } else {
-          // Fallback if no saved viewport: fit starting nodes
+          // Fallback: fit starting nodes instantly
           const startingNodes = originalNodesRef.current.filter(n =>
             n.data?.type === 'repo' ||
             n.data?.type === 'api' ||
@@ -417,28 +424,38 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
             (n.data?.type === 'file' && n.position.x <= 600)
           );
           if (startingNodes.length > 0) {
-            fitView({ nodes: startingNodes, padding: 0.2, duration: 250 });
+            fitView({ nodes: startingNodes, padding: 0.2, duration: 0 });
           } else {
-            fitView({ padding: 0.15, duration: 250 });
+            fitView({ padding: 0.15, duration: 0 });
           }
         }
-      } else {
-        // Node selected! Save the current viewport before zooming in
+
+        // 2. Restore all nodes and edges instantly
+        if (originalNodesRef.current.length > 0) {
+          setRfNodes(originalNodesRef.current);
+          setRfEdges(originalEdgesRef.current);
+        }
+
+        // 3. Trigger fade-in
+        setIsFadingOut(false);
+      }, 100);
+
+      return () => clearTimeout(timerSnap);
+    } else {
+      // Node selected! Smoothly zoom in to the selection (no fade-out needed!)
+      const timerFit = setTimeout(() => {
         savedViewportRef.current = getViewport();
-        fitView({ padding: 0.2, duration: 200 });
-      }
-    }, 100);
-    return () => clearTimeout(timer);
+        fitView({ padding: 0.2, duration: 250 });
+      }, 50);
+
+      return () => clearTimeout(timerFit);
+    }
   }, [selectedNodeId, fitView, getViewport, setViewport]);
 
   // Selection Effect: Handles filtering and positioning when selectedNodeId changes
   useEffect(() => {
     if (!selectedNodeId) {
-      // Restore the full graph layout
-      if (originalNodesRef.current.length > 0) {
-        setRfNodes(originalNodesRef.current);
-        setRfEdges(originalEdgesRef.current);
-      }
+      // Handled inside the fade-out timeout above to prevent double updates and pops!
       return;
     }
 
@@ -576,34 +593,36 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
   };
 
   return (
-    <div className="w-full h-full relative" style={{ background: '#090a10' }}>
-      <ReactFlow
-        nodes={renderedNodes}
-        edges={renderedEdges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        onNodeClick={onNodeClick}
-        onPaneClick={onPaneClick}
-        onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
-        onNodeMouseLeave={() => setHoveredNodeId(null)}
-        fitView
-      >
-        <Background color="#22263f" gap={20} size={1} />
-        <Controls position="bottom-right" />
-        <MiniMap 
-          bgColor="#0c0d15" 
-          nodeColor={(n) => {
-            const type = (n.data as any)?.type;
-            if (type === 'api') return '#ec4899';
-            if (type === 'table') return '#14b8a6';
-            if (type === 'function') return '#8b5cf6';
-            if (type === 'class') return '#06b6d4';
-            return '#475569';
-          }}
-          style={{ background: '#0c0d15', border: '1px solid #22263f' }}
-        />
-      </ReactFlow>
+    <div className="w-full h-full relative overflow-hidden" style={{ background: '#090a10' }}>
+      <div className={`w-full h-full transition-all ease-in-out ${isFadingOut ? 'opacity-0 scale-[0.985] duration-100' : 'opacity-100 scale-100 duration-200'}`}>
+        <ReactFlow
+          nodes={renderedNodes}
+          edges={renderedEdges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          onNodeClick={onNodeClick}
+          onPaneClick={onPaneClick}
+          onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
+          onNodeMouseLeave={() => setHoveredNodeId(null)}
+          fitView
+        >
+          <Background color="#22263f" gap={20} size={1} />
+          <Controls position="bottom-right" />
+          <MiniMap 
+            bgColor="#0c0d15" 
+            nodeColor={(n) => {
+              const type = (n.data as any)?.type;
+              if (type === 'api') return '#ec4899';
+              if (type === 'table') return '#14b8a6';
+              if (type === 'function') return '#8b5cf6';
+              if (type === 'class') return '#06b6d4';
+              return '#475569';
+            }}
+            style={{ background: '#0c0d15', border: '1px solid #22263f' }}
+          />
+        </ReactFlow>
+      </div>
 
       {/* Floating Legend */}
       <div className="absolute top-4 left-4 glass p-4 rounded-2xl border border-slate-800 text-[11px] font-bold text-slate-400 space-y-2 flex flex-col pointer-events-none">
