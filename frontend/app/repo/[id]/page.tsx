@@ -37,6 +37,8 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [focusDepth, setFocusDepth] = useState(2);
   const [searchQuery, setSearchQuery] = useState('');
+  const [highLevelView, setHighLevelView] = useState(false);
+  const [repoMetrics, setRepoMetrics] = useState<any | null>(null);
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -79,6 +81,8 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       
       setNodes(data.nodes);
       setEdges(data.edges);
+      setHighLevelView(!!data.high_level_view);
+      setRepoMetrics(data.metrics || null);
       setError(null);
     } catch (err: any) {
       setError(err.message);
@@ -168,6 +172,8 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
           setSearchQuery={setSearchQuery}
           focusDepth={focusDepth}
           setFocusDepth={setFocusDepth}
+          highLevelView={highLevelView}
+          repoMetrics={repoMetrics}
         />
 
         {/* 2. Center: React Flow Canvas */}

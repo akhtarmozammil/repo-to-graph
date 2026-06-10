@@ -12,6 +12,8 @@ interface SidebarProps {
   setSearchQuery: (query: string) => void;
   focusDepth: number;
   setFocusDepth: (depth: number) => void;
+  highLevelView?: boolean;
+  repoMetrics?: any;
 }
 
 interface CyclesData {
@@ -30,7 +32,9 @@ export default function Sidebar({
   searchQuery,
   setSearchQuery,
   focusDepth,
-  setFocusDepth
+  setFocusDepth,
+  highLevelView = false,
+  repoMetrics = null
 }: SidebarProps) {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
@@ -78,8 +82,8 @@ export default function Sidebar({
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery, repoId]);
 
-  // Compute metrics from graphNodes
-  const metrics = {
+  // Compute metrics from graphNodes or use backend repository-wide metrics if available
+  const metrics = repoMetrics || {
     files: graphNodes.filter((n) => n.type === 'file').length,
     classes: graphNodes.filter((n) => n.type === 'class').length,
     functions: graphNodes.filter((n) => n.type === 'function').length,
@@ -127,6 +131,17 @@ export default function Sidebar({
         {/* Tab 1: Info & Metrics */}
         {activeTab === 'info' && (
           <div className="space-y-6">
+            {highLevelView && (
+              <div className="p-3.5 bg-cyan-950/40 border border-cyan-850/40 rounded-2xl flex items-start gap-2.5 text-cyan-400 glass">
+                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-cyan-400" />
+                <div className="text-[11px] leading-relaxed text-left">
+                  <span className="font-extrabold block uppercase tracking-wider text-[9px] mb-0.5 text-cyan-300">
+                    High-Level View Active
+                  </span>
+                  This repository has {repoMetrics?.total || 'many'} symbols. Classes and functions are hidden to keep rendering smooth. Search or use Focus Mode to inspect them.
+                </div>
+              </div>
+            )}
             <div>
               <h3 className="text-slate-400 text-xs uppercase tracking-wider font-extrabold mb-3">
                 Repository Metrics

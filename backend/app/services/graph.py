@@ -44,9 +44,20 @@ class GraphService:
         """
         Returns nodes and edges formatting for React Flow frontend.
         Optionally filters to the neighborhood of a focus node.
+        For large repositories, defaults to a high-level architectural view (files/folders/APIs/tables)
+        when no focus node is active to optimize frontend rendering performance.
         """
         G = cls._build_nx_graph(db, repository_id)
-        
+        total_nodes_count = len(G)
+        high_level_view = False
+
+        # Calculate repository-wide metrics from full graph G before filtering
+        type_counts = {"repo": 0, "folder": 0, "file": 0, "class": 0, "function": 0, "api": 0, "table": 0}
+        for _, attrs in G.nodes(data=True):
+            n_type = attrs.get("type")
+            if n_type in type_counts:
+                type_counts[n_type] += 1
+
         # If focusing, extract the subgraph of neighbors up to 'depth' hops
         if focus_node_id and G.has_node(focus_node_id):
             # Convert to undirected to get neighbors in both directions (upstream and downstream)
@@ -54,6 +65,50 @@ class GraphService:
             lengths = nx.single_source_shortest_path_length(undir_G, focus_node_id, cutoff=depth)
             subgraph_nodes = list(lengths.keys())
             G = G.subgraph(subgraph_nodes)
+        
+        # If no focus is set and the repository is large (> 600 nodes),
+        # default to a high-level view (repo, folder, file, api, table) to prevent browser freeze
+        elif total_nodes_count > 600:
+            high_level_types = {'repo', 'folder', 'file', 'api', 'table'}
+            high_level_nodes = {n_id for n_id, attrs in G.nodes(data=True) if attrs.get("type") in high_level_types}
+            
+            # Create a copy of the subgraph containing only high-level nodes
+            H = G.subgraph(high_level_nodes).copy()
+            
+            # Project edges going through hidden function/class nodes up to file-level nodes
+            for u, v, attrs in G.edges(data=True):
+                edge_type = attrs.get("type")
+                u_type = G.nodes[u].get("type")
+                v_type = G.nodes[v].get("type")
+                
+                # API Route -> Function/Class => Project to API Route -> File
+                if u_type == 'api' and v_type in ('function', 'class'):
+                    v_file_path = G.nodes[v].get("file_path")
+                    if v_file_path:
+                        file_id = f"{repository_id}:file:{v_file_path}"
+                        if file_id in high_level_nodes:
+                            H.add_edge(u, file_id, type=edge_type)
+                
+                # Function/Class -> Table => Project to File -> Table
+                elif u_type in ('function', 'class') and v_type == 'table':
+                    u_file_path = G.nodes[u].get("file_path")
+                    if u_file_path:
+                        file_id = f"{repository_id}:file:{u_file_path}"
+                        if file_id in high_level_nodes:
+                            H.add_edge(file_id, v, type=edge_type)
+                
+                # Function/Class -> Function/Class => Project to File -> File (cross-file calls)
+                elif u_type in ('function', 'class') and v_type in ('function', 'class'):
+                    u_file_path = G.nodes[u].get("file_path")
+                    v_file_path = G.nodes[v].get("file_path")
+                    if u_file_path and v_file_path and u_file_path != v_file_path:
+                        file_id_u = f"{repository_id}:file:{u_file_path}"
+                        file_id_v = f"{repository_id}:file:{v_file_path}"
+                        if file_id_u in high_level_nodes and file_id_v in high_level_nodes:
+                            H.add_edge(file_id_u, file_id_v, type='CALLS')
+
+            G = H
+            high_level_view = True
 
         # Format for React Flow
         nodes_list = []
@@ -76,7 +131,19 @@ class GraphService:
                 "type": attrs.get("type", "")
             })
 
-        return {"nodes": nodes_list, "edges": edges_list}
+        return {
+            "nodes": nodes_list,
+            "edges": edges_list,
+            "metrics": {
+                "files": type_counts["file"],
+                "classes": type_counts["class"],
+                "functions": type_counts["function"],
+                "apis": type_counts["api"],
+                "tables": type_counts["table"],
+                "total": total_nodes_count
+            },
+            "high_level_view": high_level_view
+        }
 
     @classmethod
     def detect_circular_dependencies(cls, db: Session, repository_id: str) -> dict:
