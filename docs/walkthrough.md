@@ -46,7 +46,7 @@ Here is a summary of the files created and their roles:
 
 ## How to Run the Application
 
-We have configured both environments inside the `/Users/mozammil/uv_python_env/.repo-to-graph` virtual environment. Follow these steps to run:
+We have configured both environments inside the `/Users/mozammil/uv_python_env/.repo-to-graph` virtual environment (running **Python 3.12.13**). Follow these steps to run:
 
 ### 1. Launch the FastAPI Backend
 Open a terminal window, navigate to the project root, and execute:

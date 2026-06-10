@@ -49,48 +49,56 @@ repo-to-graph/
 
 ## 🛠️ Installation & Setup
 
-Both the backend and frontend are pre-configured to run out of a Python virtual environment (e.g., `/Users/mozammil/uv_python_env/.repo-to-graph`). Follow these steps to run them:
-
 ### 1. Configure Environment Variables
-To enable the Gemini explanation and chat capabilities, export your Gemini API key:
+To activate the Gemini code explanation and chat features, export your Gemini API key:
 ```bash
 export GEMINI_API_KEY="your-google-gemini-api-key"
 ```
-*(If the key is omitted, the application will run in fallback mode using descriptive mock responses).*
+*(If the key is omitted, the application will run in fallback/demo mode using mock responses).*
 
 ---
 
-### 2. Launch the FastAPI Backend
-Open a terminal, activate your virtual environment, and run the backend server:
+### 2. Setup & Launch the FastAPI Backend
+1. Open a terminal and navigate to the project root.
+2. Create and activate a Python virtual environment (recommended/tested with **Python 3.12**):
+   ```bash
+   # Create a virtual environment
+   python -m venv venv
 
-```bash
-# 1. Activate the environment
-source /Users/mozammil/uv_python_env/.repo-to-graph/bin/activate
-
-# 2. Run the FastAPI development server
-uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
-```
+   # Activate the environment
+   # On macOS/Linux:
+   source venv/bin/activate
+   # On Windows (Command Prompt):
+   venv\Scripts\activate
+   # On Windows (PowerShell):
+   .\venv\Scripts\Activate.ps1
+   ```
+3. Install the backend dependencies:
+   ```bash
+   pip install -r backend/requirements.txt
+   ```
+4. Start the development server:
+   ```bash
+   uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+   ```
 *   **API Root**: `http://localhost:8000`
-*   **Swagger Docs**: `http://localhost:8000/docs`
+*   **Swagger Documentation**: `http://localhost:8000/docs`
 
 ---
 
-### 3. Launch the Next.js Frontend
-Open a second terminal, navigate to the `frontend/` directory, install packages, and start the development server:
-
-```bash
-# 1. Activate the environment (loads node/npm configurations)
-source /Users/mozammil/uv_python_env/.repo-to-graph/bin/activate
-
-# 2. Navigate to the frontend directory
-cd frontend
-
-# 3. Install NPM dependencies (if running for the first time)
-npm install
-
-# 4. Start the development server
-npm run dev
-```
+### 3. Setup & Launch the Next.js Frontend
+1. Open a second terminal window and navigate to the `frontend/` directory:
+   ```bash
+   cd frontend
+   ```
+2. Install the Node package dependencies:
+   ```bash
+   npm install
+   ```
+3. Start the Next.js development server:
+   ```bash
+   npm run dev
+   ```
 *   **Frontend Web App**: `http://localhost:3000`
 
 ---
