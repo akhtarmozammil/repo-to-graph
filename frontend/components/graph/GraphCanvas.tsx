@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   ReactFlow,
+  ReactFlowProvider,
+  useReactFlow,
   Background,
   Controls,
   MiniMap,
@@ -119,9 +121,19 @@ const nodeTypes = {
   custom: CustomNode
 };
 
-export default function GraphCanvas({ nodes, edges, onSelectNode, selectedNodeId }: GraphCanvasProps) {
+export default function GraphCanvas(props: GraphCanvasProps) {
+  return (
+    <ReactFlowProvider>
+      <GraphCanvasContent {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: GraphCanvasProps) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<RFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  const { fitView, getViewport, setViewport } = useReactFlow();
 
   // Hover states to highlight paths
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -354,11 +366,70 @@ export default function GraphCanvas({ nodes, edges, onSelectNode, selectedNodeId
     // Store original layout configurations
     originalNodesRef.current = layoutNodes;
     originalEdgesRef.current = layoutEdges;
-  }, [nodes, edges]);
+
+    // Trigger initial fitView focused on starting nodes (APIs, repo, folders, files with x <= 600)
+    const timer = setTimeout(() => {
+      const startingNodes = layoutNodes.filter(n =>
+        n.data?.type === 'repo' ||
+        n.data?.type === 'api' ||
+        n.data?.type === 'folder' ||
+        (n.data?.type === 'file' && n.position.x <= 600)
+      );
+      
+      if (layoutNodes.length < 15) {
+        // If it is a small focused graph, fit the entire graph in view
+        fitView({ padding: 0.15, duration: 350 });
+      } else if (startingNodes.length > 0) {
+        // For a full graph, fit view to the leftmost starting nodes
+        fitView({ 
+          nodes: startingNodes, 
+          padding: 0.2, 
+          duration: 350 
+        });
+      } else {
+        fitView({ padding: 0.15, duration: 350 });
+      }
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [nodes, edges, fitView]);
 
   // Keep references to the original layout elements to restore them
   const originalNodesRef = useRef<RFNode[]>([]);
   const originalEdgesRef = useRef<Edge[]>([]);
+
+  // Ref to save the viewport before selecting a node
+  const savedViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
+
+  // fitView when selectedNodeId changes (isolation mode or restoring last position)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!selectedNodeId) {
+        // Selection cleared! Restore to the saved viewport if we have one
+        if (savedViewportRef.current) {
+          setViewport(savedViewportRef.current, { duration: 250 });
+        } else {
+          // Fallback if no saved viewport: fit starting nodes
+          const startingNodes = originalNodesRef.current.filter(n =>
+            n.data?.type === 'repo' ||
+            n.data?.type === 'api' ||
+            n.data?.type === 'folder' ||
+            (n.data?.type === 'file' && n.position.x <= 600)
+          );
+          if (startingNodes.length > 0) {
+            fitView({ nodes: startingNodes, padding: 0.2, duration: 250 });
+          } else {
+            fitView({ padding: 0.15, duration: 250 });
+          }
+        }
+      } else {
+        // Node selected! Save the current viewport before zooming in
+        savedViewportRef.current = getViewport();
+        fitView({ padding: 0.2, duration: 200 });
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [selectedNodeId, fitView, getViewport, setViewport]);
 
   // Selection Effect: Handles filtering and positioning when selectedNodeId changes
   useEffect(() => {
