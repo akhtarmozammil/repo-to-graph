@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+:root {
+  --background: #090a10;
+  --foreground: #e2e8f0;
+  --card: #131520;
+  --card-hover: #1b1e2e;
+  --border: #22263f;
+  --primary: #06b6d4; /* Neon Cyan */
+  --primary-glow: rgba(6, 182, 212, 0.15);
+  --secondary: #6366f1; /* Neon Purple/Indigo */
+  --accent: #f43f5e; /* Neon Rose/Pink */
+  --warn: #f59e0b; /* Amber */
+}
+
+@theme {
+  --color-bg-dark: var(--background);
+  --color-fg-light: var(--foreground);
+  --color-card-bg: var(--card);
+  --color-card-hover: var(--card-hover);
+  --color-border-color: var(--border);
+  --color-neon-cyan: var(--primary);
+  --color-neon-indigo: var(--secondary);
+  --color-neon-rose: var(--accent);
+  --color-neon-amber: var(--warn);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  overflow-x: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #090a10;
+}
+::-webkit-scrollbar-thumb {
+  background: #22263f;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #383f66;
+}
+
+/* Glassmorphism Classes */
+.glass {
+  background: rgba(19, 21, 32, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(34, 38, 63, 0.6);
+}
+
+.glass-interactive {
+  background: rgba(19, 21, 32, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(34, 38, 63, 0.6);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-interactive:hover {
+  background: rgba(27, 30, 46, 0.85);
+  border-color: rgba(6, 182, 212, 0.5);
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.15);
+}
+
+/* Custom React Flow Node Styling */
+.react-flow__handle {
+  background: var(--border) !important;
+  border: 2px solid var(--primary) !important;
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.react-flow__edge-path {
+  stroke: #2e3456 !important;
+  stroke-width: 2px !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--primary) !important;
+  stroke-width: 3px !important;
+  filter: drop-shadow(0 0 4px var(--primary));
+}
+
+.react-flow__controls button {
+  background: var(--card) !important;
+  border: 1px solid var(--border) !important;
+  fill: var(--foreground) !important;
+}
+
+.react-flow__controls button:hover {
+  background: var(--card-hover) !important;
+}
