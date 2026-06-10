@@ -6,7 +6,7 @@ from backend.app.models.database import Base
 # Let's put the SQLite database in the root folder of repo-to-graph
 DATABASE_URL = "sqlite:///" + os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "repo_to_graph.db")
-)
+).replace("\\", "/")
 
 # Connect to SQLite, enabling multi-threaded access (needed for FastAPI async routes)
 engine = create_engine(

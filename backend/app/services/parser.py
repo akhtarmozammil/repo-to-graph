@@ -141,16 +141,19 @@ class ParserService:
                 pruned_dirs.append(d)
             dirs[:] = pruned_dirs
 
+            # Normalize path separators for database storage/lookups
+            rel_folder_path_norm = rel_folder_path.replace(os.sep, "/")
+
             # Ensure current folder has a node
             if rel_folder_path != "":
                 folder_name = os.path.basename(root)
-                folder_node_id = f"{repo_id}:folder:{rel_folder_path}"
+                folder_node_id = f"{repo_id}:folder:{rel_folder_path_norm}"
                 nodes.append({
                     "id": folder_node_id,
                     "repository_id": repo_id,
                     "name": folder_name,
                     "type": "folder",
-                    "file_path": rel_folder_path
+                    "file_path": rel_folder_path_norm
                 })
                 folder_nodes[rel_folder_path] = folder_node_id
 
@@ -173,7 +176,8 @@ class ParserService:
                 if matcher.is_ignored(file_rel_path, is_dir=False):
                     continue
                 
-                file_node_id = f"{repo_id}:file:{file_rel_path}"
+                file_rel_path_norm = file_rel_path.replace(os.sep, "/")
+                file_node_id = f"{repo_id}:file:{file_rel_path_norm}"
                 ext = os.path.splitext(file)[1]
                 language = ext[1:] if ext else "unknown"
                 
@@ -182,7 +186,7 @@ class ParserService:
                     "repository_id": repo_id,
                     "name": file,
                     "type": "file",
-                    "file_path": file_rel_path,
+                    "file_path": file_rel_path_norm,
                     "properties": {"language": language}
                 })
 
@@ -204,22 +208,22 @@ class ParserService:
                     with open(file_abs_path, "r", encoding="utf-8", errors="ignore") as f:
                         code_content = f.read()
 
-                    parse_data = parser.parse(code_content, file_rel_path)
+                    parse_data = parser.parse(code_content, file_rel_path_norm)
                     
                     # Store for linkage phase
-                    file_imports[file_rel_path] = parse_data["imports"]
-                    file_calls[file_rel_path] = parse_data["calls"]
+                    file_imports[file_rel_path_norm] = parse_data["imports"]
+                    file_calls[file_rel_path_norm] = parse_data["calls"]
 
                     # Add class nodes and contains links
                     class_nodes = {}
                     for cls in parse_data["classes"]:
-                        class_node_id = f"{repo_id}:class:{file_rel_path}:{cls['name']}_L{cls['start_line']}"
+                        class_node_id = f"{repo_id}:class:{file_rel_path_norm}:{cls['name']}_L{cls['start_line']}"
                         nodes.append({
                             "id": class_node_id,
                             "repository_id": repo_id,
                             "name": cls["name"],
                             "type": "class",
-                            "file_path": file_rel_path,
+                            "file_path": file_rel_path_norm,
                             "start_line": cls["start_line"],
                             "end_line": cls["end_line"]
                         })
@@ -237,14 +241,13 @@ class ParserService:
                     for func in parse_data["functions"]:
                         class_name = func["class_name"]
                         func_key = f"{class_name}:{func['name']}" if class_name else func["name"]
-                        func_node_id = f"{repo_id}:function:{file_rel_path}:{func_key}_L{func['start_line']}"
+                        func_node_id = f"{repo_id}:function:{file_rel_path_norm}:{func_key}_L{func['start_line']}"
 
-                        
                         func_info = {
                             "id": func_node_id,
                             "name": func["name"],
                             "class_name": class_name,
-                            "file_path": file_rel_path,
+                            "file_path": file_rel_path_norm,
                             "start_line": func["start_line"],
                             "end_line": func["end_line"],
                             "is_method": func["is_method"]
@@ -255,7 +258,7 @@ class ParserService:
                             "repository_id": repo_id,
                             "name": func["name"],
                             "type": "function",
-                            "file_path": file_rel_path,
+                            "file_path": file_rel_path_norm,
                             "start_line": func["start_line"],
                             "end_line": func["end_line"],
                             "properties": {
@@ -280,7 +283,7 @@ class ParserService:
                             "type": "CONTAINS"
                         })
                     
-                    file_functions[file_rel_path] = file_funcs_list
+                    file_functions[file_rel_path_norm] = file_funcs_list
 
                     # Add API Endpoints nodes & links
                     for api in parse_data["apis"]:
@@ -292,7 +295,7 @@ class ParserService:
                                 "repository_id": repo_id,
                                 "name": f"{api['method']} {api['path']}",
                                 "type": "api",
-                                "file_path": file_rel_path,
+                                "file_path": file_rel_path_norm,
                                 "start_line": api["start_line"],
                                 "properties": {"method": api["method"], "path": api["path"]}
                             })
@@ -431,7 +434,7 @@ class ParserService:
             # Normalize path
             norm = os.path.normpath(candidate)
             # Remove leading ./ or ../ if normpath left it or path is relative
-            if norm.startswith("../") or norm.startswith("./"):
+            if norm.startswith(("../", "./", "..\\", ".\\")):
                 # Make relative to repo root
                 norm = os.path.normpath(os.path.join(curr_dir, candidate))
             
