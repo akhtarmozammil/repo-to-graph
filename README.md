@@ -8,12 +8,10 @@ A beautiful, premium codebase intelligence application that imports, parses, and
 
 *   **Multi-Language AST Parsing**: Direct AST parsing using Tree-sitter for Python, JavaScript, and TypeScript without needing code execution.
 *   **Architectural Flow Mapping**: Automatically identifies HTTP routing decorators (FastAPI and Express) and maps them to functions, which are then connected to SQL tables (based on raw query strings and ORM calls).
-*   **Interactive React Flow Canvas**: Visualizes codebases in left-to-right logical layers:
-    *   **APIs** (HTTP Routes) 🌐
-    *   **Directories & Files** 📁📄
-    *   **Classes & Functions** 🧱⚙️
-    *   **Database Tables** 🗄️
+*   **Interactive React Flow Canvas**: Visualizes codebases in left-to-right logical layers (APIs 🌐 ➡️ Directories & Files 📁📄 ➡️ Classes & Functions 🧱⚙️ ➡️ Database Tables 🗄️).
+*   **Smart Starting Focus**: Large repositories automatically align the initial camera viewport with the leftmost starting nodes (APIs, Folders, and Files) rather than centering on the middle of a massive canvas, while small focused graphs are automatically fully fitted.
 *   **Focus & Isolation Modes**: Click on any node to dynamically isolate its 1-5 hop call neighborhood (callers and callees), bringing related nodes together.
+*   **High-Performance Viewport Transitions**: Remembers your exact viewport pan/zoom position on node selection, and restores it instantly behind a quick hardware-accelerated fade-out overlay on deselect, eliminating rendering jitter entirely.
 *   **Refactoring Impact (Blast Radius) Score**: Uses NetworkX graph traversals (ancestors and descendants) to score how risky a change to a specific function or file is.
 *   **Circular Dependency Detection**: Instantly detects and lists structural cycles in your import or call graph.
 *   **AI Code Explanation & Chat**: Integrated with Gemini 2.5 Flash to explain selected code snippets or answer codebase-wide architecture queries through an interactive chat drawer.

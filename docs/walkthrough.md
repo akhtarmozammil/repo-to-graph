@@ -39,6 +39,8 @@ Here is a summary of the files created and their roles:
 2. **Controller-to-Database Flow Mapping**: Automatically parses routing decorators (Express/FastAPI) and SQL query strings, aligning APIs on the left and tables on the right of the canvas.
 3. **Blast Radius Refactoring Scores**: Calculated dynamically via NetworkX ancestors and descendants counts.
 4. **Interactive Focus Modes**: Setting a focus node automatically isolates the graph canvas to its 1-5 hop call neighborhood.
+5. **High-Performance Viewport Transitions**: Remembers your exact viewport pan/zoom position on node selection, and restores it instantly behind a quick hardware-accelerated fade-out overlay on deselect, eliminating rendering jitter entirely.
+6. **Smart Starting Focus**: Large repositories automatically align the initial camera viewport with the leftmost starting nodes (APIs, Folders, and Files at the entry point) rather than centering on the middle of a massive canvas, while small focused graphs are automatically fully fitted.
 
 ---
 
