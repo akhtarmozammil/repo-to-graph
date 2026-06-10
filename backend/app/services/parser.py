@@ -1,5 +1,6 @@
 import os
 import logging
+import fnmatch
 from sqlalchemy.orm import Session
 from backend.app.parsers.python import PythonParser
 from backend.app.parsers.javascript import JavascriptParser
@@ -13,6 +14,61 @@ IGNORE_DIRS = {
     ".git", "node_modules", "venv", ".venv", "env", "__pycache__",
     ".next", "dist", "build", ".idea", ".vscode", "out"
 }
+
+class GitIgnoreMatcher:
+    def __init__(self, repo_path: str):
+        self.rules = []
+        gitignore_path = os.path.join(repo_path, ".gitignore")
+        if os.path.exists(gitignore_path):
+            try:
+                with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        line = line.strip()
+                        # Ignore comments and empty lines
+                        if not line or line.startswith("#"):
+                            continue
+                        self.rules.append(line)
+            except Exception as e:
+                logger.error(f"Failed to read .gitignore at {gitignore_path}: {e}")
+
+    def is_ignored(self, rel_path: str, is_dir: bool = False) -> bool:
+        # Normalize path separators
+        rel_path = rel_path.replace(os.sep, "/")
+        
+        # Always ignore .git directory itself
+        parts = rel_path.split("/")
+        if ".git" in parts:
+            return True
+
+        for rule in self.rules:
+            # Check negation if any (e.g. !important.txt)
+            is_negated = rule.startswith("!")
+            actual_rule = rule[1:] if is_negated else rule
+            
+            # If rule ends with /, it only applies to directories
+            if actual_rule.endswith("/"):
+                if not is_dir:
+                    continue
+                actual_rule = actual_rule[:-1]
+
+            # Match logic
+            matched = False
+            
+            # Case 1: Rule starts with / -> match relative to root
+            if actual_rule.startswith("/"):
+                pattern = actual_rule[1:]
+                matched = fnmatch.fnmatchcase(rel_path, pattern) or fnmatch.fnmatchcase(rel_path, pattern + "/*")
+            # Case 2: Rule contains / -> match relative to root as well
+            elif "/" in actual_rule:
+                matched = fnmatch.fnmatchcase(rel_path, actual_rule) or fnmatch.fnmatchcase(rel_path, actual_rule + "/*")
+            # Case 3: Rule has no / -> matches any file or folder name in the path
+            else:
+                matched = any(fnmatch.fnmatchcase(part, actual_rule) for part in parts)
+
+            if matched:
+                return not is_negated
+
+        return False
 
 class ParserService:
     def __init__(self):
@@ -67,16 +123,23 @@ class ParserService:
         # Key: rel_path, Value: node_id
         folder_nodes = {"": repo_node_id}
 
+        matcher = GitIgnoreMatcher(repo_path)
+
         # Walk directory tree
         for root, dirs, files in os.walk(repo_path):
-            # Prune ignore folders in-place
-            dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
-
             # Get folder relative path from repo root
             rel_folder_path = os.path.relpath(root, repo_path)
             if rel_folder_path == ".":
-
                 rel_folder_path = ""
+
+            # Prune ignore folders in-place using hardcoded list and local .gitignore
+            pruned_dirs = []
+            for d in dirs:
+                d_rel_path = os.path.join(rel_folder_path, d) if rel_folder_path else d
+                if d in IGNORE_DIRS or matcher.is_ignored(d_rel_path, is_dir=True):
+                    continue
+                pruned_dirs.append(d)
+            dirs[:] = pruned_dirs
 
             # Ensure current folder has a node
             if rel_folder_path != "":
@@ -105,6 +168,10 @@ class ParserService:
             for file in files:
                 file_abs_path = os.path.join(root, file)
                 file_rel_path = os.path.relpath(file_abs_path, repo_path)
+                
+                # Skip if ignored by .gitignore
+                if matcher.is_ignored(file_rel_path, is_dir=False):
+                    continue
                 
                 file_node_id = f"{repo_id}:file:{file_rel_path}"
                 ext = os.path.splitext(file)[1]

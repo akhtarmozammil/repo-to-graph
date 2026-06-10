@@ -13,7 +13,9 @@ import {
   Handle,
   Position,
   Edge,
-  Node as RFNode
+  Node as RFNode,
+  getSmoothStepPath,
+  EdgeProps
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Cpu, Database, Folder, FileCode, Play, Terminal, Layers } from 'lucide-react';
@@ -39,6 +41,7 @@ interface GraphCanvasProps {
   edges: GraphEdge[];
   onSelectNode: (node: GraphNode | null) => void;
   selectedNodeId: string | null;
+  focusedNodeId: string | null;
 }
 
 // ----------------- CUSTOM NODE COMPONENTS -----------------
@@ -117,8 +120,55 @@ function CustomNode({ data }: { data: { name: string; type: string; isSelected: 
   );
 }
 
+function DistributeStepEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style = {},
+  markerEnd,
+  animated
+}: EdgeProps) {
+  // Stagger the vertical line (centerX) based on the edge ID to prevent overlapping vertical lines.
+  const hash = id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const midX = (sourceX + targetX) / 2;
+  const deltaX = Math.abs(targetX - sourceX);
+  
+  // Stagger range: up to 25% of the horizontal distance in either direction
+  const offset = ((hash % 9) - 4) * (deltaX * 0.05); 
+  const centerX = midX + offset;
+
+  const [edgePath] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+    borderRadius: 16,
+    centerX
+  });
+
+  return (
+    <path
+      id={id}
+      style={style}
+      className={`react-flow__edge-path ${animated ? 'animated' : ''}`}
+      d={edgePath}
+      markerEnd={markerEnd}
+    />
+  );
+}
+
 const nodeTypes = {
   custom: CustomNode
+};
+
+const edgeTypes = {
+  customStep: DistributeStepEdge
 };
 
 export default function GraphCanvas(props: GraphCanvasProps) {
@@ -129,7 +179,7 @@ export default function GraphCanvas(props: GraphCanvasProps) {
   );
 }
 
-function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: GraphCanvasProps) {
+function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focusedNodeId }: GraphCanvasProps) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<RFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -140,6 +190,9 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
 
   // Fade out state for layout snap restoration
   const [isFadingOut, setIsFadingOut] = useState(false);
+
+  // Active category filter selected from the legend
+  const [activeLegendFilter, setActiveLegendFilter] = useState<string | null>(null);
 
   // Apply layout and transform to React Flow state
   useEffect(() => {
@@ -355,7 +408,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
       id: `edge-${idx}`,
       source: edge.source,
       target: edge.target,
-      type: 'smoothstep',
+      type: 'customStep',
       animated: edge.type === 'CALLS' || edge.type === 'CALLS_API',
       data: { type: edge.type },
       style: {
@@ -370,70 +423,102 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
     originalNodesRef.current = layoutNodes;
     originalEdgesRef.current = layoutEdges;
 
-    // Trigger initial fitView focused on starting nodes (APIs, repo, folders, files with x <= 600)
+    // Trigger initial fitView focused on starting nodes or focused node
     const timer = setTimeout(() => {
-      const startingNodes = layoutNodes.filter(n =>
-        n.data?.type === 'repo' ||
-        n.data?.type === 'api' ||
-        n.data?.type === 'folder' ||
-        (n.data?.type === 'file' && n.position.x <= 600)
-      );
-      
-      if (layoutNodes.length < 15) {
-        // If it is a small focused graph, fit the entire graph in view
-        fitView({ padding: 0.15, duration: 350 });
-      } else if (startingNodes.length > 0) {
-        // For a full graph, fit view to the leftmost starting nodes
-        fitView({ 
-          nodes: startingNodes, 
-          padding: 0.2, 
-          duration: 350 
-        });
+      const focusedNode = layoutNodes.find(n => n.id === focusedNodeId);
+      if (focusedNode) {
+        // Center on the focused node!
+        fitView({ nodes: [focusedNode], padding: 0.4, duration: 350, maxZoom: 0.75 });
       } else {
-        fitView({ padding: 0.15, duration: 350 });
+        const repoNode = layoutNodes.find(n => n.data?.type === 'repo');
+        const folderNodes = layoutNodes.filter(n => n.data?.type === 'folder');
+        const startingNodes = repoNode
+          ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
+          : (folderNodes.length > 0 ? [folderNodes[0]] : layoutNodes.slice(0, 3));
+        
+        if (layoutNodes.length < 15) {
+          // If it is a small focused graph, fit the entire graph in view
+          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+        } else if (startingNodes.length > 0) {
+          // Focus on repo main folder starting point (snap instantly)
+          fitView({ 
+            nodes: startingNodes, 
+            padding: 0.3, 
+            duration: 0,
+            maxZoom: 0.75
+          });
+        } else {
+          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+        }
       }
     }, 120);
 
     return () => clearTimeout(timer);
-  }, [nodes, edges, fitView]);
+  }, [nodes, edges, focusedNodeId, fitView]);
 
   // Keep references to the original layout elements to restore them
   const originalNodesRef = useRef<RFNode[]>([]);
   const originalEdgesRef = useRef<Edge[]>([]);
 
+  // Ref to track the last selected node ID to focus on when clearing selection
+  const lastSelectedNodeIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (selectedNodeId) {
+      lastSelectedNodeIdRef.current = selectedNodeId;
+    }
+  }, [selectedNodeId]);
+
   // Ref to save the viewport before selecting a node
   const savedViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
 
+  // Ref to ignore selection change when legend is handling it
+  const ignoreSelectionChangeRef = useRef(false);
+
   // fitView when selectedNodeId changes (isolation mode or restoring last position)
   useEffect(() => {
+    // If Focus Mode is active, we let the Focus Controller manage the viewport
+    // and skip client-side selection transition animations.
+    if (focusedNodeId) {
+      return;
+    }
+
     if (!selectedNodeId) {
+      // If we should ignore this selection change (because legend filter is handling it), return!
+      if (ignoreSelectionChangeRef.current) {
+        ignoreSelectionChangeRef.current = false;
+        return;
+      }
+
       // Selection cleared! Trigger quick fade-out
       setIsFadingOut(true);
 
       // Wait 100ms for fade-out to complete before snapping layout/viewport
       const timerSnap = setTimeout(() => {
-        // 1. Snap camera back to saved viewport instantly
-        if (savedViewportRef.current) {
-          setViewport(savedViewportRef.current, { duration: 0 });
-        } else {
-          // Fallback: fit starting nodes instantly
-          const startingNodes = originalNodesRef.current.filter(n =>
-            n.data?.type === 'repo' ||
-            n.data?.type === 'api' ||
-            n.data?.type === 'folder' ||
-            (n.data?.type === 'file' && n.position.x <= 600)
-          );
-          if (startingNodes.length > 0) {
-            fitView({ nodes: startingNodes, padding: 0.2, duration: 0 });
-          } else {
-            fitView({ padding: 0.15, duration: 0 });
-          }
-        }
-
-        // 2. Restore all nodes and edges instantly
+        // 1. Restore all nodes and edges instantly first so fitView measures the correct nodes
         if (originalNodesRef.current.length > 0) {
           setRfNodes(originalNodesRef.current);
           setRfEdges(originalEdgesRef.current);
+        }
+
+        // 2. Center/focus on the previously selected node in the full graph!
+        const lastSelectedNode = originalNodesRef.current.find(n => n.id === lastSelectedNodeIdRef.current);
+        if (lastSelectedNode) {
+          fitView({ nodes: [lastSelectedNode], padding: 0.4, duration: 0, maxZoom: 0.75 });
+        } else if (savedViewportRef.current) {
+          setViewport(savedViewportRef.current, { duration: 0 });
+        } else {
+          // Fallback: fit starting nodes instantly
+          const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
+          const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
+          const startingNodes = repoNode
+            ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
+            : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3));
+          if (startingNodes.length > 0) {
+            fitView({ nodes: startingNodes, padding: 0.3, duration: 0, maxZoom: 0.75 });
+          } else {
+            fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+          }
         }
 
         // 3. Trigger fade-in
@@ -445,15 +530,29 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
       // Node selected! Smoothly zoom in to the selection (no fade-out needed!)
       const timerFit = setTimeout(() => {
         savedViewportRef.current = getViewport();
-        fitView({ padding: 0.2, duration: 250 });
+        fitView({ padding: 0.2, duration: 250, maxZoom: 0.75 });
       }, 50);
 
       return () => clearTimeout(timerFit);
     }
-  }, [selectedNodeId, fitView, getViewport, setViewport]);
+  }, [selectedNodeId, focusedNodeId, fitView, getViewport, setViewport]);
 
   // Selection Effect: Handles filtering and positioning when selectedNodeId changes
   useEffect(() => {
+    if (focusedNodeId) {
+      // Just update the isSelected flag in rfNodes state without client-side layout filtering
+      setRfNodes((currentNodes) =>
+        currentNodes.map((n) => ({
+          ...n,
+          data: {
+            ...n.data,
+            isSelected: n.id === selectedNodeId,
+          },
+        }))
+      );
+      return;
+    }
+
     if (!selectedNodeId) {
       // Handled inside the fade-out timeout above to prevent double updates and pops!
       return;
@@ -532,13 +631,161 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
 
     setRfNodes(filteredNodes);
     setRfEdges(filteredEdges);
+  }, [selectedNodeId, focusedNodeId]);
+
+  // Clear legend filter when selectedNodeId is active
+  useEffect(() => {
+    if (selectedNodeId) {
+      setActiveLegendFilter(null);
+    }
   }, [selectedNodeId]);
+
+  const handleLegendClick = (type: string) => {
+    const nextFilter = activeLegendFilter === type ? null : type;
+
+    // Trigger fade-out
+    setIsFadingOut(true);
+
+    if (selectedNodeId) {
+      ignoreSelectionChangeRef.current = true;
+      onSelectNode(null);
+    }
+
+    setTimeout(() => {
+      // Restore original nodes/edges
+      if (originalNodesRef.current.length > 0) {
+        setRfNodes(originalNodesRef.current);
+        setRfEdges(originalEdgesRef.current);
+      }
+      
+      // Clear the ignore ref
+      ignoreSelectionChangeRef.current = false;
+
+      // Apply the next filter
+      setActiveLegendFilter(nextFilter);
+    }, 80);
+  };
+
+  // Filter and layout nodes/edges by legend selection
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    if (!activeLegendFilter) {
+      return { filteredNodes: rfNodes, filteredEdges: rfEdges };
+    }
+
+    // 1. Filter nodes of the active category
+    const baseNodes = rfNodes.filter((n) => n.data?.type === activeLegendFilter);
+    const nodeIds = new Set(baseNodes.map((n) => n.id));
+
+    // 2. Filter edges between these nodes
+    const baseEdges = rfEdges.filter(
+      (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
+    );
+
+    // If there are no nodes, return empty
+    if (baseNodes.length === 0) {
+      return { filteredNodes: [], filteredEdges: [] };
+    }
+
+    // 3. Compute dynamic layout for filtered nodes to prevent vertical overlapping
+    const layers: Record<string, number> = {};
+    baseNodes.forEach((n) => {
+      layers[n.id] = 0;
+    });
+
+    // Run passes to calculate layers
+    const maxPasses = Math.min(5, baseNodes.length);
+    for (let pass = 0; pass < maxPasses; pass++) {
+      let changed = false;
+      baseEdges.forEach((edge) => {
+        const srcLayer = layers[edge.source];
+        const tgtLayer = layers[edge.target];
+        if (tgtLayer <= srcLayer) {
+          layers[edge.target] = srcLayer + 1;
+          changed = true;
+        }
+      });
+      if (!changed) break;
+    }
+
+    // Group nodes by layer
+    const nodesByLayer: Record<number, typeof baseNodes> = {};
+    baseNodes.forEach((node) => {
+      const layer = layers[node.id] || 0;
+      if (!nodesByLayer[layer]) {
+        nodesByLayer[layer] = [];
+      }
+      nodesByLayer[layer].push(node);
+    });
+
+    const xSpacing = 300;
+    const ySpacing = 95;
+
+    const positionedNodes = baseNodes.map((node) => {
+      const layer = layers[node.id] || 0;
+      const nodesInLayer = nodesByLayer[layer];
+      const indexInLayer = nodesInLayer.findIndex((n) => n.id === node.id);
+
+      const totalHeight = (nodesInLayer.length - 1) * ySpacing;
+      const yOffset = -totalHeight / 2;
+
+      return {
+        ...node,
+        draggable: false, // Disable dragging in filtered view to preserve auto-layout
+        position: {
+          x: 150 + layer * xSpacing,
+          y: yOffset + indexInLayer * ySpacing,
+        },
+      };
+    });
+
+    return { filteredNodes: positionedNodes, filteredEdges: baseEdges };
+  }, [rfNodes, rfEdges, activeLegendFilter]);
+
+  // Keep track of the last filter we fitted view for, to avoid double-fitting on same value
+  const lastFittedFilterRef = useRef<string | null | undefined>(undefined);
+
+  // fitView when activeLegendFilter changes
+  useEffect(() => {
+    if (lastFittedFilterRef.current === activeLegendFilter) return;
+    lastFittedFilterRef.current = activeLegendFilter;
+
+    // Only snap/fade-in if we are currently transitioning
+    if (!isFadingOut) return;
+
+    const timerFit = setTimeout(() => {
+      if (activeLegendFilter) {
+        // Fit view to all currently rendered nodes (which are the filtered nodes)
+        // Calling fitView without specifying the nodes option ensures React Flow
+        // dynamically centers on whatever is rendered in the canvas, using updated DOM coordinates.
+        fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+      } else {
+        // Filter cleared! Snap back to repo main folder starting point
+        const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
+        const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
+        const startingNodes = repoNode
+          ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
+          : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3));
+          
+        if (originalNodesRef.current.length < 15) {
+          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+        } else if (startingNodes.length > 0) {
+          fitView({ nodes: startingNodes, padding: 0.3, duration: 0, maxZoom: 0.75 });
+        } else {
+          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+        }
+      }
+
+      setIsFadingOut(false);
+    }, 120); // 120ms to allow React Flow to layout and measure updated DOM coordinates
+
+    return () => clearTimeout(timerFit);
+  }, [activeLegendFilter, fitView, isFadingOut]);
 
   // Handle path highlighting on hover
   const renderedEdges = useMemo(() => {
-    if (!hoveredNodeId) return rfEdges;
+    if (!hoveredNodeId) return filteredEdges;
 
-    return rfEdges.map((edge) => {
+    return filteredEdges.map((edge) => {
       const isRelated = edge.source === hoveredNodeId || edge.target === hoveredNodeId;
       return {
         ...edge,
@@ -552,14 +799,14 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
         }
       };
     });
-  }, [rfEdges, hoveredNodeId]);
+  }, [filteredEdges, hoveredNodeId]);
 
   // Handle node dimming on hover
   const renderedNodes = useMemo(() => {
-    if (!hoveredNodeId) return rfNodes;
+    if (!hoveredNodeId) return filteredNodes;
 
     const connectedNodeIds = new Set<string>([hoveredNodeId]);
-    rfEdges.forEach((edge) => {
+    filteredEdges.forEach((edge) => {
       if (edge.source === hoveredNodeId) {
         connectedNodeIds.add(edge.target);
       }
@@ -568,7 +815,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
       }
     });
 
-    return rfNodes.map((node) => {
+    return filteredNodes.map((node) => {
       const isConnected = connectedNodeIds.has(node.id);
       return {
         ...node,
@@ -579,7 +826,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
         }
       };
     });
-  }, [rfNodes, rfEdges, hoveredNodeId]);
+  }, [filteredNodes, filteredEdges, hoveredNodeId]);
 
   const onNodeClick = (_: any, node: RFNode) => {
     const rawNode = nodes.find(n => n.id === node.id);
@@ -590,6 +837,16 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
 
   const onPaneClick = () => {
     onSelectNode(null);
+    if (activeLegendFilter) {
+      setIsFadingOut(true);
+      setTimeout(() => {
+        if (originalNodesRef.current.length > 0) {
+          setRfNodes(originalNodesRef.current);
+          setRfEdges(originalEdgesRef.current);
+        }
+        setActiveLegendFilter(null);
+      }, 80);
+    }
   };
 
   return (
@@ -601,11 +858,12 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodeClick={onNodeClick}
           onPaneClick={onPaneClick}
           onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
           onNodeMouseLeave={() => setHoveredNodeId(null)}
-          fitView
+          fitViewOptions={{ maxZoom: 0.75 }}
         >
           <Background color="#22263f" gap={20} size={1} />
           <Controls position="bottom-right" />
@@ -624,39 +882,102 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId }: Grap
         </ReactFlow>
       </div>
 
-      {/* Floating Legend */}
-      <div className="absolute top-4 left-4 glass p-4 rounded-2xl border border-slate-800 text-[11px] font-bold text-slate-400 space-y-2 flex flex-col pointer-events-none">
-        <span className="text-xs uppercase tracking-wider text-slate-300 border-b border-slate-850 pb-1.5 mb-1">
+      {/* Floating Interactive Legend */}
+      <div className="absolute top-4 left-4 glass p-4 rounded-2xl border border-slate-800 text-[11px] font-bold text-slate-400 space-y-2.5 flex flex-col z-10 w-[160px]">
+        <span className="text-xs uppercase tracking-wider text-slate-300 border-b border-slate-850 pb-1.5 mb-1 block">
           Graph Legend
         </span>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-indigo-900 to-indigo-700 border border-indigo-500" />
+        <button
+          onClick={() => handleLegendClick('repo')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'repo'
+              ? 'bg-indigo-500/20 ring-1 ring-indigo-500/50 text-indigo-300'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-indigo-900 to-indigo-700 border border-indigo-500 flex-shrink-0" />
           <span>Repository</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-amber-950 to-amber-800 border border-amber-500" />
+        </button>
+        <button
+          onClick={() => handleLegendClick('folder')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'folder'
+              ? 'bg-amber-500/20 ring-1 ring-amber-500/50 text-amber-400'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-amber-950 to-amber-800 border border-amber-500 flex-shrink-0" />
           <span>Folder</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-slate-900 to-slate-800 border border-slate-700" />
+        </button>
+        <button
+          onClick={() => handleLegendClick('file')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'file'
+              ? 'bg-slate-500/20 ring-1 ring-slate-500/50 text-slate-200'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-slate-900 to-slate-800 border border-slate-700 flex-shrink-0" />
           <span>File</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-cyan-950 to-cyan-800 border border-cyan-500" />
+        </button>
+        <button
+          onClick={() => handleLegendClick('class')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'class'
+              ? 'bg-cyan-500/20 ring-1 ring-cyan-500/50 text-cyan-400'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-cyan-950 to-cyan-800 border border-cyan-500 flex-shrink-0" />
           <span>Class</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-violet-950 to-violet-800 border border-violet-500" />
+        </button>
+        <button
+          onClick={() => handleLegendClick('function')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'function'
+              ? 'bg-violet-500/20 ring-1 ring-violet-500/50 text-violet-400'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-violet-950 to-violet-800 border border-violet-500 flex-shrink-0" />
           <span>Function</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-rose-950 to-rose-800 border border-rose-500" />
+        </button>
+        <button
+          onClick={() => handleLegendClick('api')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'api'
+              ? 'bg-rose-500/20 ring-1 ring-rose-500/50 text-rose-400'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-rose-950 to-rose-800 border border-rose-500 flex-shrink-0" />
           <span>API Route</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-teal-950 to-teal-800 border border-teal-500" />
+        </button>
+        <button
+          onClick={() => handleLegendClick('table')}
+          className={`flex items-center gap-2 cursor-pointer w-full text-left py-1 px-1.5 rounded-lg transition-all ${
+            activeLegendFilter === 'table'
+              ? 'bg-teal-500/20 ring-1 ring-teal-500/50 text-teal-400'
+              : activeLegendFilter
+              ? 'opacity-40 hover:opacity-80'
+              : 'hover:bg-slate-900/50'
+          }`}
+        >
+          <span className="w-3 h-3 rounded-md bg-gradient-to-r from-teal-950 to-teal-800 border border-teal-500 flex-shrink-0" />
           <span>DB Table</span>
-        </div>
+        </button>
       </div>
     </div>
   );

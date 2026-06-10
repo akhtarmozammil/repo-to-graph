@@ -84,6 +84,21 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       setHighLevelView(!!data.high_level_view);
       setRepoMetrics(data.metrics || null);
       setError(null);
+
+      // Post-fetch node selection adjustment
+      if (focusedNodeId) {
+        const targetNode = data.nodes.find((n: any) => n.id === focusedNodeId);
+        if (targetNode) {
+          setSelectedNode(targetNode);
+        }
+      } else if (selectedNode) {
+        // If focus was cleared, check if the previously selected node is still in the loaded graph.
+        // If it's not, clear the selection.
+        const isStillPresent = data.nodes.some((n: any) => n.id === selectedNode.id);
+        if (!isStillPresent) {
+          setSelectedNode(null);
+        }
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -99,6 +114,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
   const handleFocusNode = (nodeId: string | null) => {
     setFocusedNodeId(nodeId);
     if (nodeId) {
+      setFocusDepth(2); // Reset depth range to default 2 hops when focusing a new node
       // Find node details to select it as well in details panel
       const targetNode = nodes.find(n => n.id === nodeId);
       if (targetNode) {
@@ -167,6 +183,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
           repoId={repoId}
           onFocusNode={handleFocusNode}
           focusedNodeId={focusedNodeId}
+          selectedNodeId={selectedNode ? selectedNode.id : null}
           graphNodes={nodes}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
@@ -192,6 +209,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
               edges={edges}
               onSelectNode={setSelectedNode}
               selectedNodeId={selectedNode ? selectedNode.id : null}
+              focusedNodeId={focusedNodeId}
             />
           )}
         </div>
@@ -201,6 +219,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
           <NodeDetails
             repoId={repoId}
             node={selectedNode}
+            onFocusNode={handleFocusNode}
             onClose={() => setSelectedNode(null)}
           />
         )}

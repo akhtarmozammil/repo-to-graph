@@ -7,6 +7,7 @@ interface SidebarProps {
   repoId: string;
   onFocusNode: (nodeId: string | null) => void;
   focusedNodeId: string | null;
+  selectedNodeId?: string | null;
   graphNodes: any[];
   searchQuery: string;
   setSearchQuery: (query: string) => void;
@@ -28,6 +29,7 @@ export default function Sidebar({
   repoId,
   onFocusNode,
   focusedNodeId,
+  selectedNodeId = null,
   graphNodes,
   searchQuery,
   setSearchQuery,
@@ -195,6 +197,19 @@ export default function Sidebar({
                     className="w-full bg-slate-900 hover:bg-slate-850 text-slate-300 border border-slate-800 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" /> Clear Focus Mode
+                  </button>
+                </div>
+              ) : selectedNodeId ? (
+                // Node is selected, but not focused yet!
+                <div className="space-y-3 text-left">
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    You have selected a node. Click below to filter the graph to its neighborhood.
+                  </p>
+                  <button
+                    onClick={() => onFocusNode(selectedNodeId)}
+                    className="w-full bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-extrabold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all shadow-md hover:shadow-cyan-500/10"
+                  >
+                    <Sliders className="w-3.5 h-3.5" /> Focus Node in Graph
                   </button>
                 </div>
               ) : (

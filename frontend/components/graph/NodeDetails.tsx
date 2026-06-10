@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Play, Sparkles, X, Code, FileText, Share2, HelpCircle, Layers, RefreshCw } from 'lucide-react';
+import { Play, Sparkles, X, Code, FileText, Share2, HelpCircle, Layers, RefreshCw, Sliders } from 'lucide-react';
 
 interface NodeDetailsProps {
   repoId: string;
@@ -14,6 +14,7 @@ interface NodeDetailsProps {
     end_line?: number;
     properties?: any;
   } | null;
+  onFocusNode?: (nodeId: string | null) => void;
   onClose: () => void;
 }
 
@@ -30,7 +31,7 @@ interface ImpactData {
 
 const API_BASE = 'http://localhost:8000/api';
 
-export default function NodeDetails({ repoId, node, onClose }: NodeDetailsProps) {
+export default function NodeDetails({ repoId, node, onFocusNode, onClose }: NodeDetailsProps) {
   const [fileContent, setFileContent] = useState<string>('');
   const [sourceLoading, setSourceLoading] = useState(false);
   const [aiExplanation, setAiExplanation] = useState<string>('');
@@ -147,6 +148,14 @@ export default function NodeDetails({ repoId, node, onClose }: NodeDetailsProps)
                 </span>
               )}
             </div>
+          )}
+          {onFocusNode && (
+            <button
+              onClick={() => onFocusNode(node.id)}
+              className="w-full bg-slate-900 hover:bg-slate-850 text-cyan-400 border border-slate-850 font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all hover:border-cyan-500/30"
+            >
+              <Sliders className="w-3.5 h-3.5" /> Focus Node in Graph
+            </button>
           )}
         </div>
 
