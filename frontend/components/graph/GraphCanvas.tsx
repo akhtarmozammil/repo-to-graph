@@ -18,7 +18,7 @@ import {
   EdgeProps
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Cpu, Database, Folder, FileCode, Play, Terminal, Layers } from 'lucide-react';
+import { Cpu, Database, Folder, FileCode, Play, Terminal, Layers, Target } from 'lucide-react';
 
 interface GraphNode {
   id: string;
@@ -42,6 +42,8 @@ interface GraphCanvasProps {
   onSelectNode: (node: GraphNode | null) => void;
   selectedNodeId: string | null;
   focusedNodeId: string | null;
+  onFocusNode: (nodeId: string | null) => void;
+  loading: boolean;
 }
 
 // ----------------- CUSTOM NODE COMPONENTS -----------------
@@ -179,11 +181,11 @@ export default function GraphCanvas(props: GraphCanvasProps) {
   );
 }
 
-function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focusedNodeId }: GraphCanvasProps) {
+function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focusedNodeId, onFocusNode, loading }: GraphCanvasProps) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<RFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  const { fitView, getViewport, setViewport } = useReactFlow();
+  const { fitView, setCenter } = useReactFlow();
 
   // Hover states to highlight paths
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -193,6 +195,51 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
   // Active category filter selected from the legend
   const [activeLegendFilter, setActiveLegendFilter] = useState<string | null>(null);
+
+  // Keep track of the last explored/scanned node
+  const [lastExploredNode, setLastExploredNode] = useState<GraphNode | null>(null);
+
+  useEffect(() => {
+    const activeId = selectedNodeId || focusedNodeId;
+    if (activeId) {
+      const found = nodes.find(n => n.id === activeId);
+      if (found) {
+        setLastExploredNode(found);
+      }
+    }
+  }, [selectedNodeId, focusedNodeId, nodes]);
+
+  // Keep references to the original layout elements to restore them
+  const originalNodesRef = useRef<RFNode[]>([]);
+  const originalEdgesRef = useRef<Edge[]>([]);
+
+  // Ref to ignore selection change when legend is handling it
+  const ignoreSelectionChangeRef = useRef(false);
+
+  // Helper to center the viewport directly on a node's coordinates using setCenter
+  const centerOnNode = (nodeId: string, layoutList: RFNode[], duration = 350) => {
+    let targetNode = layoutList.find(n => n.id === nodeId);
+    
+    // Fallback to parent file if node is hidden in high-level view
+    if (!targetNode && lastExploredNode?.file_path) {
+      const repoId = lastExploredNode.id.split(':')[0];
+      const fileNodeId = `${repoId}:file:${lastExploredNode.file_path}`;
+      targetNode = layoutList.find(n => n.id === fileNodeId);
+    }
+
+    if (targetNode) {
+      // Center on target node coordinate (x + 90, y + 25)
+      setCenter(targetNode.position.x + 90, targetNode.position.y + 25, { zoom: 0.75, duration });
+      return true;
+    }
+    return false;
+  };
+
+  const handleRecenter = () => {
+    if (lastExploredNode) {
+      centerOnNode(lastExploredNode.id, rfNodes, 350);
+    }
+  };
 
   // Apply layout and transform to React Flow state
   useEffect(() => {
@@ -423,12 +470,14 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     originalNodesRef.current = layoutNodes;
     originalEdgesRef.current = layoutEdges;
 
-    // Trigger initial fitView focused on starting nodes or focused node
+    // Trigger initial viewport adjustments (landing page repo fit or last explored node centering)
     const timer = setTimeout(() => {
-      const focusedNode = layoutNodes.find(n => n.id === focusedNodeId);
-      if (focusedNode) {
-        // Center on the focused node!
-        fitView({ nodes: [focusedNode], padding: 0.4, duration: 350, maxZoom: 0.75 });
+      if (focusedNodeId) {
+        // Center on the focused node instantly
+        centerOnNode(focusedNodeId, layoutNodes, 0);
+      } else if (lastExploredNode) {
+        // Center on the last explored node with a smooth transition
+        centerOnNode(lastExploredNode.id, layoutNodes, 350);
       } else {
         const repoNode = layoutNodes.find(n => n.data?.type === 'repo');
         const folderNodes = layoutNodes.filter(n => n.data?.type === 'folder');
@@ -437,10 +486,8 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           : (folderNodes.length > 0 ? [folderNodes[0]] : layoutNodes.slice(0, 3));
         
         if (layoutNodes.length < 15) {
-          // If it is a small focused graph, fit the entire graph in view
           fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
         } else if (startingNodes.length > 0) {
-          // Focus on repo main folder starting point (snap instantly)
           fitView({ 
             nodes: startingNodes, 
             padding: 0.3, 
@@ -451,40 +498,18 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
         }
       }
-    }, 120);
+    }, 50);
 
     return () => clearTimeout(timer);
-  }, [nodes, edges, focusedNodeId, fitView]);
+  }, [nodes, edges, focusedNodeId]);
 
-  // Keep references to the original layout elements to restore them
-  const originalNodesRef = useRef<RFNode[]>([]);
-  const originalEdgesRef = useRef<Edge[]>([]);
-
-  // Ref to track the last selected node ID to focus on when clearing selection
-  const lastSelectedNodeIdRef = useRef<string | null>(null);
-
+  // Handle selectedNodeId changes (isolation mode and layout restorations)
   useEffect(() => {
-    if (selectedNodeId) {
-      lastSelectedNodeIdRef.current = selectedNodeId;
-    }
-  }, [selectedNodeId]);
-
-  // Ref to save the viewport before selecting a node
-  const savedViewportRef = useRef<{ x: number; y: number; zoom: number } | null>(null);
-
-  // Ref to ignore selection change when legend is handling it
-  const ignoreSelectionChangeRef = useRef(false);
-
-  // fitView when selectedNodeId changes (isolation mode or restoring last position)
-  useEffect(() => {
-    // If Focus Mode is active, we let the Focus Controller manage the viewport
-    // and skip client-side selection transition animations.
-    if (focusedNodeId) {
+    if (focusedNodeId || loading) {
       return;
     }
 
     if (!selectedNodeId) {
-      // If we should ignore this selection change (because legend filter is handling it), return!
       if (ignoreSelectionChangeRef.current) {
         ignoreSelectionChangeRef.current = false;
         return;
@@ -493,35 +518,16 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       // Selection cleared! Trigger quick fade-out
       setIsFadingOut(true);
 
-      // Wait 100ms for fade-out to complete before snapping layout/viewport
+      // Wait 100ms for fade-out to complete before restoring layout/viewport
       const timerSnap = setTimeout(() => {
-        // 1. Restore all nodes and edges instantly first so fitView measures the correct nodes
         if (originalNodesRef.current.length > 0) {
           setRfNodes(originalNodesRef.current);
           setRfEdges(originalEdgesRef.current);
-        }
-
-        // 2. Center/focus on the previously selected node in the full graph!
-        const lastSelectedNode = originalNodesRef.current.find(n => n.id === lastSelectedNodeIdRef.current);
-        if (lastSelectedNode) {
-          fitView({ nodes: [lastSelectedNode], padding: 0.4, duration: 0, maxZoom: 0.75 });
-        } else if (savedViewportRef.current) {
-          setViewport(savedViewportRef.current, { duration: 0 });
-        } else {
-          // Fallback: fit starting nodes instantly
-          const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
-          const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
-          const startingNodes = repoNode
-            ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
-            : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3));
-          if (startingNodes.length > 0) {
-            fitView({ nodes: startingNodes, padding: 0.3, duration: 0, maxZoom: 0.75 });
-          } else {
-            fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+          
+          if (lastExploredNode) {
+            centerOnNode(lastExploredNode.id, originalNodesRef.current, 350);
           }
         }
-
-        // 3. Trigger fade-in
         setIsFadingOut(false);
       }, 100);
 
@@ -529,13 +535,12 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     } else {
       // Node selected! Smoothly zoom in to the selection (no fade-out needed!)
       const timerFit = setTimeout(() => {
-        savedViewportRef.current = getViewport();
         fitView({ padding: 0.2, duration: 250, maxZoom: 0.75 });
       }, 50);
 
       return () => clearTimeout(timerFit);
     }
-  }, [selectedNodeId, focusedNodeId, fitView, getViewport, setViewport]);
+  }, [selectedNodeId, focusedNodeId, loading, fitView]);
 
   // Selection Effect: Handles filtering and positioning when selectedNodeId changes
   useEffect(() => {
@@ -837,6 +842,9 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
   const onPaneClick = () => {
     onSelectNode(null);
+    if (focusedNodeId) {
+      onFocusNode(null);
+    }
     if (activeLegendFilter) {
       setIsFadingOut(true);
       setTimeout(() => {
@@ -980,6 +988,17 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           <span>DB Table</span>
         </button>
       </div>
+
+      {/* Floating Recenter Button */}
+      {lastExploredNode && (
+        <button
+          onClick={handleRecenter}
+          className="absolute top-4 right-4 glass px-4 py-2.5 rounded-2xl border border-slate-800 text-[11px] font-extrabold text-cyan-400 hover:text-cyan-300 hover:border-cyan-500/30 flex items-center gap-2 cursor-pointer z-10 transition-all shadow-lg hover:shadow-cyan-500/5 animate-fade-in"
+        >
+          <Target className="w-4 h-4" />
+          <span>Recenter on {lastExploredNode.name}</span>
+        </button>
+      )}
     </div>
   );
 }
