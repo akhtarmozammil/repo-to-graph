@@ -43,6 +43,11 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // States for page initial load overlay
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [showLoader, setShowLoader] = useState(true);
+  const [loaderOpacity, setLoaderOpacity] = useState(1);
+
   // 1. Fetch Repository Details
   useEffect(() => {
     const fetchRepoDetails = async () => {
@@ -103,6 +108,12 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       setError(err.message);
     } finally {
       setLoading(false);
+      // Fade out initial loader on first successful load
+      if (isInitialLoad) {
+        setLoaderOpacity(0);
+        setTimeout(() => setShowLoader(false), 500);
+        setIsInitialLoad(false);
+      }
     }
   };
 
@@ -195,6 +206,28 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
 
         {/* 2. Center: React Flow Canvas */}
         <div className="flex-1 h-full relative">
+          {showLoader && (
+            <div 
+              style={{ opacity: loaderOpacity }}
+              className="absolute inset-0 bg-[#090a10] z-50 flex flex-col items-center justify-center gap-4 transition-opacity duration-500 pointer-events-none"
+            >
+              <div className="relative w-16 h-16">
+                <div className="absolute inset-0 rounded-full border-2 border-cyan-500/20 border-t-cyan-400 animate-spin" />
+                <div className="absolute inset-2 rounded-full bg-cyan-500/10 border border-cyan-500/30 animate-pulse flex items-center justify-center">
+                  <Database className="w-5 h-5 text-cyan-400" />
+                </div>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-xs uppercase tracking-widest font-extrabold text-slate-400 animate-pulse">
+                  Analyzing Codebase
+                </span>
+                <span className="text-[10px] text-slate-500 font-bold">
+                  Extracting symbols and building dependency graph...
+                </span>
+              </div>
+            </div>
+          )}
+
           {nodes.length === 0 && !loading ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 z-10 text-slate-400">
               <LayoutDashboard className="w-12 h-12 text-slate-800 mb-4 animate-bounce" />
