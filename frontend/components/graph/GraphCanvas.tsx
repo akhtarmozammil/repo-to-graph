@@ -409,7 +409,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       source: edge.source,
       target: edge.target,
       type: 'customStep',
-      animated: edge.type === 'CALLS' || edge.type === 'CALLS_API',
+      animated: (edge.type === 'CALLS' || edge.type === 'CALLS_API') && edges.length < 150,
       data: { type: edge.type },
       style: {
         stroke: edge.type === 'CALLS' ? '#8b5cf6' : edge.type === 'CALLS_API' ? '#ec4899' : edge.type === 'USES' ? '#14b8a6' : '#475569',
@@ -864,6 +864,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
           onNodeMouseLeave={() => setHoveredNodeId(null)}
           fitViewOptions={{ maxZoom: 0.75 }}
+          onlyRenderVisibleElements={true}
         >
           <Background color="#22263f" gap={20} size={1} />
           <Controls position="bottom-right" />
