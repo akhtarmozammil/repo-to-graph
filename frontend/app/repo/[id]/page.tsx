@@ -131,6 +131,8 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       if (targetNode) {
         setSelectedNode(targetNode);
       }
+    } else {
+      setSelectedNode(null);
     }
   };
 
@@ -243,6 +245,8 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
               onSelectNode={setSelectedNode}
               selectedNodeId={selectedNode ? selectedNode.id : null}
               focusedNodeId={focusedNodeId}
+              onFocusNode={handleFocusNode}
+              loading={loading}
             />
           )}
         </div>
@@ -253,7 +257,12 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
             repoId={repoId}
             node={selectedNode}
             onFocusNode={handleFocusNode}
-            onClose={() => setSelectedNode(null)}
+            onClose={() => {
+              setSelectedNode(null);
+              if (focusedNodeId) {
+                handleFocusNode(null);
+              }
+            }}
           />
         )}
       </div>
