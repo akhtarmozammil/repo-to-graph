@@ -66,9 +66,9 @@ class GraphService:
             subgraph_nodes = list(lengths.keys())
             G = G.subgraph(subgraph_nodes)
         
-        # If no focus is set and the repository is large (> 600 nodes),
+        # If no focus is set and the repository is large (> 10000 nodes),
         # default to a high-level view (repo, folder, file, api, table) to prevent browser freeze
-        elif total_nodes_count > 600:
+        elif total_nodes_count > 10000:
             high_level_types = {'repo', 'folder', 'file', 'api', 'table'}
             high_level_nodes = {n_id for n_id, attrs in G.nodes(data=True) if attrs.get("type") in high_level_types}
             
