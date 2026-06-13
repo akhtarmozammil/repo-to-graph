@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -8,14 +8,14 @@ import {
   Background,
   Controls,
   MiniMap,
-  useNodesState,
-  useEdgesState,
   Handle,
   Position,
   Edge,
   Node as RFNode,
   getSmoothStepPath,
-  EdgeProps
+  EdgeProps,
+  applyNodeChanges,
+  NodeChange
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Cpu, Database, Folder, FileCode, Play, Terminal, Layers, Target } from 'lucide-react';
@@ -173,6 +173,54 @@ const edgeTypes = {
   customStep: DistributeStepEdge
 };
 
+class SpatialHashGrid {
+  private cellSize: number;
+  private grid: Map<string, RFNode[]>;
+
+  constructor(cellSize = 800) {
+    this.cellSize = cellSize;
+    this.grid = new Map();
+  }
+
+  clear() {
+    this.grid.clear();
+  }
+
+  insert(node: RFNode) {
+    const cellX = Math.floor(node.position.x / this.cellSize);
+    const cellY = Math.floor(node.position.y / this.cellSize);
+    const key = `${cellX},${cellY}`;
+    if (!this.grid.has(key)) {
+      this.grid.set(key, []);
+    }
+    this.grid.get(key)!.push(node);
+  }
+
+  insertAll(nodes: RFNode[]) {
+    this.clear();
+    nodes.forEach(n => this.insert(n));
+  }
+
+  query(minX: number, minY: number, maxX: number, maxY: number): RFNode[] {
+    const startCellX = Math.floor(minX / this.cellSize);
+    const endCellX = Math.floor(maxX / this.cellSize);
+    const startCellY = Math.floor(minY / this.cellSize);
+    const endCellY = Math.floor(maxY / this.cellSize);
+
+    const result: RFNode[] = [];
+    for (let cx = startCellX; cx <= endCellX; cx++) {
+      for (let cy = startCellY; cy <= endCellY; cy++) {
+        const key = `${cx},${cy}`;
+        const cellNodes = this.grid.get(key);
+        if (cellNodes) {
+          result.push(...cellNodes);
+        }
+      }
+    }
+    return result;
+  }
+}
+
 export default function GraphCanvas(props: GraphCanvasProps) {
   return (
     <ReactFlowProvider>
@@ -182,10 +230,31 @@ export default function GraphCanvas(props: GraphCanvasProps) {
 }
 
 function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focusedNodeId, onFocusNode, loading }: GraphCanvasProps) {
-  const [rfNodes, setRfNodes, onNodesChange] = useNodesState<RFNode>([]);
-  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [rfNodes, setRfNodes] = useState<RFNode[]>([]);
+  const [rfEdges, setRfEdges] = useState<Edge[]>([]);
 
-  const { fitView, setCenter } = useReactFlow();
+  const { fitView, setCenter, getViewport } = useReactFlow();
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const spatialGridRef = useRef<SpatialHashGrid>(new SpatialHashGrid(800));
+  const adjacencyMapRef = useRef<Map<string, Set<string>>>(new Map());
+
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+
+  // Measure the container dynamically to handle initial loading and resizes
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (let entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setContainerSize({ width, height });
+        }
+      }
+    });
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   // Hover states to highlight paths
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -215,6 +284,94 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
   // Ref to ignore selection change when legend is handling it
   const ignoreSelectionChangeRef = useRef(false);
+
+  // Custom onNodesChange to support node dragging while virtualized
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      setRfNodes((nds) => {
+        const updated = applyNodeChanges(changes, nds);
+        // Sync new positions back to the master list
+        updated.forEach((node) => {
+          const orig = originalNodesRef.current.find((n) => n.id === node.id);
+          if (orig) {
+            orig.position = node.position;
+          }
+        });
+        return updated;
+      });
+    },
+    []
+  );
+
+  // Custom onEdgesChange (no-op for read-only edges)
+  const onEdgesChange = useCallback(
+    (changes: any) => {},
+    []
+  );
+
+  // Helper to update viewport-aware virtualized graph
+  const updateVirtualGraph = useCallback((viewport?: { x: number; y: number; zoom: number }) => {
+    if (focusedNodeId || selectedNodeId || activeLegendFilter) return;
+    if (originalNodesRef.current.length === 0) return;
+
+    const vp = viewport || getViewport();
+    const width = containerSize.width || 800;
+    const height = containerSize.height || 600;
+
+    // Convert screen coordinates to graph coordinates with a 1-viewport buffer in all directions
+    const minX = -vp.x / vp.zoom - width / vp.zoom;
+    const minY = -vp.y / vp.zoom - height / vp.zoom;
+    const maxX = (width - vp.x) / vp.zoom + width / vp.zoom;
+    const maxY = (height - vp.y) / vp.zoom + height / vp.zoom;
+
+    const visibleNodesList = spatialGridRef.current.query(minX, minY, maxX, maxY);
+    const renderSet = new Set<string>();
+
+    // Always render repository root node
+    const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
+    if (repoNode) renderSet.add(repoNode.id);
+
+    visibleNodesList.forEach(node => {
+      renderSet.add(node.id);
+      const neighbors = adjacencyMapRef.current.get(node.id);
+      if (neighbors) {
+        neighbors.forEach(id => renderSet.add(id));
+      }
+    });
+
+    const filteredNodes = originalNodesRef.current.filter(n => renderSet.has(n.id));
+    const filteredEdges = originalEdgesRef.current.filter(e => 
+      renderSet.has(e.source) && renderSet.has(e.target)
+    );
+
+    setRfNodes(filteredNodes);
+    setRfEdges(filteredEdges);
+  }, [focusedNodeId, selectedNodeId, getViewport, containerSize, activeLegendFilter]);
+
+  const lastCenterRef = useRef<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
+
+  // Viewport change event listener
+  const onMove = useCallback((event: any, viewport: { x: number; y: number; zoom: number }) => {
+    if (focusedNodeId || selectedNodeId || activeLegendFilter) return;
+
+    const width = containerSize.width || 800;
+    const height = containerSize.height || 600;
+
+    const centerX = (width / 2 - viewport.x) / viewport.zoom;
+    const centerY = (height / 2 - viewport.y) / viewport.zoom;
+
+    const dx = centerX - lastCenterRef.current.x;
+    const dy = centerY - lastCenterRef.current.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    const zoomRatio = viewport.zoom / lastCenterRef.current.zoom;
+
+    // Recalculate virtual set only when user pans > 30% of screen width, or changes zoom > 20%
+    if (distance > (0.3 * width) / viewport.zoom || zoomRatio < 0.8 || zoomRatio > 1.25) {
+      lastCenterRef.current = { x: centerX, y: centerY, zoom: viewport.zoom };
+      updateVirtualGraph(viewport);
+    }
+  }, [focusedNodeId, selectedNodeId, updateVirtualGraph, containerSize, activeLegendFilter]);
 
   // Helper to center the viewport directly on a node's coordinates using setCenter
   const centerOnNode = (nodeId: string, layoutList: RFNode[], duration = 350) => {
@@ -252,12 +409,23 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     const repo = nodes.find(n => n.type === 'repo');
 
     const layoutNodes: RFNode[] = [];
+    const seenNodeIds = new Set<string>();
+
+    const pushUniqueNode = (node: RFNode) => {
+      if (!seenNodeIds.has(node.id)) {
+        seenNodeIds.add(node.id);
+        layoutNodes.push(node);
+        return true;
+      }
+      return false;
+    };
+
     let currentY = 0;
     const rowSpacing = 90;
 
     // 1. Position Repo node
     if (repo) {
-      layoutNodes.push({
+      pushUniqueNode({
         id: repo.id,
         type: 'custom',
         position: { x: 300, y: -100 },
@@ -267,7 +435,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
     // 2. Position APIs on the extreme left (X = 0)
     apis.forEach((node, idx) => {
-      layoutNodes.push({
+      pushUniqueNode({
         id: node.id,
         type: 'custom',
         position: { x: 0, y: idx * rowSpacing },
@@ -277,7 +445,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
     // 3. Position Tables on the extreme right (X = 1500)
     tables.forEach((node, idx) => {
-      layoutNodes.push({
+      pushUniqueNode({
         id: node.id,
         type: 'custom',
         position: { x: 1500, y: idx * rowSpacing },
@@ -309,7 +477,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       const folderFiles = folderFilesMap[folder.file_path || ""] || [];
       
       // Position folder node
-      layoutNodes.push({
+      pushUniqueNode({
         id: folder.id,
         type: 'custom',
         position: { x: 300, y: currentY },
@@ -323,7 +491,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
       // Position files under this folder
       folderFiles.forEach((file) => {
-        layoutNodes.push({
+        pushUniqueNode({
           id: file.id,
           type: 'custom',
           position: { x: 600, y: currentY },
@@ -341,7 +509,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
         // Place classes
         fileClasses.forEach((cls) => {
-          layoutNodes.push({
+          pushUniqueNode({
             id: cls.id,
             type: 'custom',
             position: { x: 900, y: currentY },
@@ -354,26 +522,30 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
             currentY += rowSpacing;
           } else {
             classMethods.forEach((method) => {
-              layoutNodes.push({
+              const added = pushUniqueNode({
                 id: method.id,
                 type: 'custom',
                 position: { x: 1200, y: currentY },
                 data: { name: method.name, type: 'function', isSelected: selectedNodeId === method.id }
               });
-              currentY += rowSpacing;
+              if (added) {
+                currentY += rowSpacing;
+              }
             });
           }
         });
 
         // Place standalone functions
         fileStandaloneFuncs.forEach((func) => {
-          layoutNodes.push({
+          const added = pushUniqueNode({
             id: func.id,
             type: 'custom',
             position: { x: 1200, y: currentY },
             data: { name: func.name, type: 'function', isSelected: selectedNodeId === func.id }
           });
-          currentY += rowSpacing;
+          if (added) {
+            currentY += rowSpacing;
+          }
         });
       });
     });
@@ -381,7 +553,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     // Process files at the root level (no parent folder)
     const rootFiles = folderFilesMap[""] || [];
     rootFiles.forEach((file) => {
-      layoutNodes.push({
+      pushUniqueNode({
         id: file.id,
         type: 'custom',
         position: { x: 600, y: currentY },
@@ -397,7 +569,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       }
 
       fileClasses.forEach((cls) => {
-        layoutNodes.push({
+        pushUniqueNode({
           id: cls.id,
           type: 'custom',
           position: { x: 900, y: currentY },
@@ -409,36 +581,39 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           currentY += rowSpacing;
         } else {
           classMethods.forEach((method) => {
-            layoutNodes.push({
+            const added = pushUniqueNode({
               id: method.id,
               type: 'custom',
               position: { x: 1200, y: currentY },
               data: { name: method.name, type: 'function', isSelected: selectedNodeId === method.id }
             });
-            currentY += rowSpacing;
+            if (added) {
+              currentY += rowSpacing;
+            }
           });
         }
       });
 
       fileStandaloneFuncs.forEach((func) => {
-        layoutNodes.push({
+        const added = pushUniqueNode({
           id: func.id,
           type: 'custom',
           position: { x: 1200, y: currentY },
           data: { name: func.name, type: 'function', isSelected: selectedNodeId === func.id }
         });
-        currentY += rowSpacing;
+        if (added) {
+          currentY += rowSpacing;
+        }
       });
     });
 
     // Fallback: Position any leftover unplaced nodes
-    const processedIds = new Set(layoutNodes.map(n => n.id));
     nodes.forEach((node) => {
-      if (!processedIds.has(node.id)) {
+      if (!seenNodeIds.has(node.id)) {
         const hash = node.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
         const xOffset = (hash % 10) * 15;
         const yOffset = (hash % 5) * 15;
-        layoutNodes.push({
+        pushUniqueNode({
           id: node.id,
           type: 'custom',
           position: { x: 600 + xOffset, y: currentY + yOffset },
@@ -470,27 +645,87 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     originalNodesRef.current = layoutNodes;
     originalEdgesRef.current = layoutEdges;
 
-    // Trigger initial viewport adjustments (landing page repo fit or last explored node centering)
+    // Build spatial grid and adjacency map
+    spatialGridRef.current.insertAll(layoutNodes);
+    
+    const adj = new Map<string, Set<string>>();
+    layoutEdges.forEach(edge => {
+      if (!adj.has(edge.source)) adj.set(edge.source, new Set());
+      if (!adj.has(edge.target)) adj.set(edge.target, new Set());
+      adj.get(edge.source)!.add(edge.target);
+      adj.get(edge.target)!.add(edge.source);
+    });
+    adjacencyMapRef.current = adj;
+
+    // Initially fall back to full nodes/edges before size observer resolves
+    setRfNodes(layoutNodes);
+    setRfEdges(layoutEdges);
+  }, [nodes, edges]);
+
+  const initialFitDoneRef = useRef<string | null>(null);
+
+  // Trigger virtualization and centering exactly once when container has measured dimensions
+  useEffect(() => {
+    if (containerSize.width === 0 || originalNodesRef.current.length === 0) return;
+
+    const repoId = nodes[0]?.id.split(':')[0] || '';
+    const graphStateKey = `${repoId}-${focusedNodeId || ''}-${nodes.length}`;
+
+    if (initialFitDoneRef.current === graphStateKey) return;
+    initialFitDoneRef.current = graphStateKey;
+
+    const viewport = getViewport();
+    const width = containerSize.width;
+    const height = containerSize.height;
+
+    const minX = -viewport.x / viewport.zoom - width / viewport.zoom;
+    const minY = -viewport.y / viewport.zoom - height / viewport.zoom;
+    const maxX = (width - viewport.x) / viewport.zoom + width / viewport.zoom;
+    const maxY = (height - viewport.y) / viewport.zoom + height / viewport.zoom;
+
+    const visible = spatialGridRef.current.query(minX, minY, maxX, maxY);
+    const renderSet = new Set<string>();
+
+    const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
+    if (repoNode) renderSet.add(repoNode.id);
+
+    const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
+    if (folderNodes.length > 0) {
+      renderSet.add(folderNodes[0].id);
+    }
+
+    visible.forEach(node => {
+      renderSet.add(node.id);
+      const neighbors = adjacencyMapRef.current.get(node.id);
+      if (neighbors) {
+        neighbors.forEach(id => renderSet.add(id));
+      }
+    });
+
+    const initialNodes = originalNodesRef.current.filter(n => renderSet.has(n.id));
+    const initialEdges = originalEdgesRef.current.filter(e => renderSet.has(e.source) && renderSet.has(e.target));
+
+    setRfNodes(initialNodes);
+    setRfEdges(initialEdges);
+
     const timer = setTimeout(() => {
       if (focusedNodeId) {
-        // Center on the focused node instantly
-        centerOnNode(focusedNodeId, layoutNodes, 0);
+        centerOnNode(focusedNodeId, originalNodesRef.current, 0);
       } else if (lastExploredNode) {
-        // Center on the last explored node with a smooth transition
-        centerOnNode(lastExploredNode.id, layoutNodes, 350);
+        centerOnNode(lastExploredNode.id, originalNodesRef.current, 350);
       } else {
-        const repoNode = layoutNodes.find(n => n.data?.type === 'repo');
-        const folderNodes = layoutNodes.filter(n => n.data?.type === 'folder');
+        const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
+        const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
         const startingNodes = repoNode
           ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
-          : (folderNodes.length > 0 ? [folderNodes[0]] : layoutNodes.slice(0, 3));
-        
-        if (layoutNodes.length < 15) {
+          : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3));
+
+        if (originalNodesRef.current.length < 15) {
           fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
         } else if (startingNodes.length > 0) {
-          fitView({ 
-            nodes: startingNodes, 
-            padding: 0.3, 
+          fitView({
+            nodes: startingNodes,
+            padding: 0.3,
             duration: 0,
             maxZoom: 0.75
           });
@@ -501,7 +736,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     }, 50);
 
     return () => clearTimeout(timer);
-  }, [nodes, edges, focusedNodeId]);
+  }, [containerSize, nodes, focusedNodeId, getViewport, fitView, lastExploredNode]);
 
   // Handle selectedNodeId changes (isolation mode and layout restorations)
   useEffect(() => {
@@ -521,8 +756,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       // Wait 100ms for fade-out to complete before restoring layout/viewport
       const timerSnap = setTimeout(() => {
         if (originalNodesRef.current.length > 0) {
-          setRfNodes(originalNodesRef.current);
-          setRfEdges(originalEdgesRef.current);
+          updateVirtualGraph(getViewport());
           
           if (lastExploredNode) {
             centerOnNode(lastExploredNode.id, originalNodesRef.current, 350);
@@ -540,7 +774,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
       return () => clearTimeout(timerFit);
     }
-  }, [selectedNodeId, focusedNodeId, loading, fitView]);
+  }, [selectedNodeId, focusedNodeId, loading, fitView, getViewport, updateVirtualGraph]);
 
   // Selection Effect: Handles filtering and positioning when selectedNodeId changes
   useEffect(() => {
@@ -563,8 +797,8 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       return;
     }
 
-    // A node is selected! Find it in the CURRENT state to get its current position
-    const selectedNode = rfNodes.find((n) => n.id === selectedNodeId);
+    // A node is selected! Find it in the master layout state to get its current position
+    const selectedNode = originalNodesRef.current.find((n) => n.id === selectedNodeId);
     if (!selectedNode) return;
 
     const origPos = selectedNode.position;
@@ -657,10 +891,15 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     }
 
     setTimeout(() => {
-      // Restore original nodes/edges
-      if (originalNodesRef.current.length > 0) {
-        setRfNodes(originalNodesRef.current);
-        setRfEdges(originalEdgesRef.current);
+      if (nextFilter) {
+        // Load all nodes so the column-filtering useMemo can run on the full set
+        if (originalNodesRef.current.length > 0) {
+          setRfNodes(originalNodesRef.current);
+          setRfEdges(originalEdgesRef.current);
+        }
+      } else {
+        // Restore virtualized view when legend filter is cleared
+        updateVirtualGraph(getViewport());
       }
       
       // Clear the ignore ref
@@ -759,10 +998,15 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
     const timerFit = setTimeout(() => {
       if (activeLegendFilter) {
-        // Fit view to all currently rendered nodes (which are the filtered nodes)
-        // Calling fitView without specifying the nodes option ensures React Flow
-        // dynamically centers on whatever is rendered in the canvas, using updated DOM coordinates.
-        fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+        // Fit view specifically to the filtered nodes of this category to center on the cluster
+        if (filteredNodes.length > 0) {
+          fitView({
+            nodes: filteredNodes,
+            padding: 0.2,
+            duration: 0,
+            maxZoom: 0.75
+          });
+        }
       } else {
         // Filter cleared! Snap back to repo main folder starting point
         const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
@@ -784,7 +1028,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     }, 120); // 120ms to allow React Flow to layout and measure updated DOM coordinates
 
     return () => clearTimeout(timerFit);
-  }, [activeLegendFilter, fitView, isFadingOut]);
+  }, [activeLegendFilter, fitView, isFadingOut, filteredNodes]);
 
   // Handle path highlighting on hover
   const renderedEdges = useMemo(() => {
@@ -858,7 +1102,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
   };
 
   return (
-    <div className="w-full h-full relative overflow-hidden" style={{ background: '#090a10' }}>
+    <div ref={containerRef} className="w-full h-full relative overflow-hidden" style={{ background: '#090a10' }}>
       <div className={`w-full h-full transition-all ease-in-out ${isFadingOut ? 'opacity-0 scale-[0.985] duration-100' : 'opacity-100 scale-100 duration-200'}`}>
         <ReactFlow
           nodes={renderedNodes}
@@ -871,6 +1115,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           onPaneClick={onPaneClick}
           onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
           onNodeMouseLeave={() => setHoveredNodeId(null)}
+          onMove={onMove}
           fitViewOptions={{ maxZoom: 0.75 }}
           onlyRenderVisibleElements={true}
         >
