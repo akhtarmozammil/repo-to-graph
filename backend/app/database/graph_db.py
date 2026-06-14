@@ -14,6 +14,19 @@ def bulk_insert_graph(db: Session, nodes: list[dict], edges: list[dict]):
     nodes format: [{id, repository_id, name, type, file_path, start_line, end_line, properties}]
     edges format: [{repository_id, source_id, target_id, type, properties}]
     """
+    # Deduplicate nodes by ID to prevent sqlite3.IntegrityError
+    unique_nodes = {}
+    for n in nodes:
+        unique_nodes[n["id"]] = n
+    nodes = list(unique_nodes.values())
+
+    # Deduplicate edges by (source_id, target_id, type) to prevent redundant database rows
+    unique_edges = {}
+    for e in edges:
+        edge_key = (e["source_id"], e["target_id"], e["type"])
+        unique_edges[edge_key] = e
+    edges = list(unique_edges.values())
+
     # 1. Prepare node objects
     node_objs = []
     for n in nodes:

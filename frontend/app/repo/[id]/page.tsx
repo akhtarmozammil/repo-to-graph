@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, useCallback } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, RefreshCw, LayoutDashboard, Database, AlertCircle } from 'lucide-react';
 import dynamic from 'next/dynamic';
@@ -39,6 +39,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [highLevelView, setHighLevelView] = useState(false);
   const [repoMetrics, setRepoMetrics] = useState<any | null>(null);
+  const [activeLegendFilter, setActiveLegendFilter] = useState<string | null>(null);
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +53,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
   useEffect(() => {
     const fetchRepoDetails = async () => {
       try {
-        const res = await fetch(`${API_BASE}/repositories/${repoId}`);
+        const res = await fetch(`${API_BASE}/repositories/${repoId}`, { cache: 'no-store' });
         if (!res.ok) throw new Error('Repository details not found');
         const data = await res.json();
         setRepo(data);
@@ -73,6 +74,8 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       if (focusedNodeId) {
         params.append('focus_node_id', focusedNodeId);
         params.append('depth', focusDepth.toString());
+      } else if (activeLegendFilter) {
+        params.append('node_type', activeLegendFilter);
       }
       
       const queryStr = params.toString();
@@ -80,7 +83,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
         url += `?${queryStr}`;
       }
 
-      const res = await fetch(url);
+      const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to fetch graph data');
       const data = await res.json();
       
@@ -108,24 +111,19 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       setError(err.message);
     } finally {
       setLoading(false);
-      // Fade out initial loader on first successful load
-      if (isInitialLoad) {
-        setLoaderOpacity(0);
-        setTimeout(() => setShowLoader(false), 500);
-        setIsInitialLoad(false);
-      }
     }
   };
 
   useEffect(() => {
     fetchGraphData();
-  }, [repoId, focusedNodeId, focusDepth]);
+  }, [repoId, focusedNodeId, focusDepth, activeLegendFilter]);
 
   // Handle focusing node from search click or graph click
   const handleFocusNode = (nodeId: string | null) => {
     setFocusedNodeId(nodeId);
     if (nodeId) {
       setFocusDepth(2); // Reset depth range to default 2 hops when focusing a new node
+      setActiveLegendFilter(null); // Clear legend filter when focusing
       // Find node details to select it as well in details panel
       const targetNode = nodes.find(n => n.id === nodeId);
       if (targetNode) {
@@ -135,6 +133,15 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
       setSelectedNode(null);
     }
   };
+
+  const handleGraphReady = useCallback(() => {
+    if (isInitialLoad) {
+      setLoaderOpacity(0);
+      setTimeout(() => setShowLoader(false), 500);
+      setIsInitialLoad(false);
+    }
+  }, [isInitialLoad]);
+
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 flex-col">
@@ -195,6 +202,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
         <Sidebar
           repoId={repoId}
           onFocusNode={handleFocusNode}
+          onSelectNode={setSelectedNode}
           focusedNodeId={focusedNodeId}
           selectedNodeId={selectedNode ? selectedNode.id : null}
           graphNodes={nodes}
@@ -247,6 +255,9 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
               focusedNodeId={focusedNodeId}
               onFocusNode={handleFocusNode}
               loading={loading}
+              activeLegendFilter={activeLegendFilter}
+              setActiveLegendFilter={setActiveLegendFilter}
+              onGraphReady={handleGraphReady}
             />
           )}
         </div>

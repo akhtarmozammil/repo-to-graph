@@ -142,10 +142,11 @@ def get_graph(
     id: str, 
     focus_node_id: str | None = Query(None),
     depth: int = Query(2, ge=1, le=5),
+    node_type: str | None = Query(None),
     db: Session = Depends(get_db)
 ):
     """Returns nodes and edges. Supports centering on a node and custom depth."""
-    return GraphService.get_graph_data(db, id, focus_node_id=focus_node_id, depth=depth)
+    return GraphService.get_graph_data(db, id, focus_node_id=focus_node_id, depth=depth, node_type=node_type)
 
 @router.get("/repositories/{id}/cycles")
 def get_cycles(id: str, db: Session = Depends(get_db)):

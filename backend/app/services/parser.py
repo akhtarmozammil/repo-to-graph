@@ -5,6 +5,11 @@ from sqlalchemy.orm import Session
 from backend.app.parsers.python import PythonParser
 from backend.app.parsers.javascript import JavascriptParser
 from backend.app.parsers.typescript import TypescriptParser
+from backend.app.parsers.go import GoParser
+from backend.app.parsers.java import JavaParser
+from backend.app.parsers.ruby import RubyParser
+from backend.app.parsers.php import PhpParser
+from backend.app.parsers.terraform import TerraformParser
 from backend.app.database.graph_db import clear_graph, bulk_insert_graph
 
 logger = logging.getLogger(__name__)
@@ -75,6 +80,11 @@ class ParserService:
         self.py_parser = PythonParser()
         self.js_parser = JavascriptParser()
         self.ts_parser = TypescriptParser()
+        self.go_parser = GoParser()
+        self.java_parser = JavaParser()
+        self.rb_parser = RubyParser()
+        self.php_parser = PhpParser()
+        self.tf_parser = TerraformParser()
 
     def get_parser(self, file_path: str):
         _, ext = os.path.splitext(file_path.lower())
@@ -84,6 +94,16 @@ class ParserService:
             return self.js_parser
         elif ext in (".ts", ".tsx"):
             return self.ts_parser
+        elif ext == ".go":
+            return self.go_parser
+        elif ext == ".java":
+            return self.java_parser
+        elif ext == ".rb":
+            return self.rb_parser
+        elif ext == ".php":
+            return self.php_parser
+        elif ext == ".tf":
+            return self.tf_parser
         return None
 
     def scan_repository(self, db: Session, repo_id: str, repo_path: str):

@@ -39,7 +39,8 @@ class GraphService:
         db: Session, 
         repository_id: str, 
         focus_node_id: str | None = None,
-        depth: int = 2
+        depth: int = 2,
+        node_type: str | None = None
     ) -> dict:
         """
         Returns nodes and edges formatting for React Flow frontend.
@@ -58,8 +59,16 @@ class GraphService:
             if n_type in type_counts:
                 type_counts[n_type] += 1
 
+        # If a specific node_type is requested (e.g. from legend click)
+        if node_type:
+            type_nodes = {n_id for n_id, attrs in G.nodes(data=True) if attrs.get("type") == node_type}
+            G = G.subgraph(type_nodes).copy()
+            # If the number of matching nodes > 1000, don't return edges to prevent browser lag
+            if len(type_nodes) > 1000:
+                G.remove_edges_from(list(G.edges()))
+
         # If focusing, extract the subgraph of neighbors up to 'depth' hops
-        if focus_node_id and G.has_node(focus_node_id):
+        elif focus_node_id and G.has_node(focus_node_id):
             # Convert to undirected to get neighbors in both directions (upstream and downstream)
             undir_G = G.to_undirected()
             lengths = nx.single_source_shortest_path_length(undir_G, focus_node_id, cutoff=depth)

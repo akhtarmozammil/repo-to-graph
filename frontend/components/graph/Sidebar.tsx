@@ -6,6 +6,7 @@ import { Search, AlertTriangle, BarChart3, HelpCircle, Layers, Sliders, RefreshC
 interface SidebarProps {
   repoId: string;
   onFocusNode: (nodeId: string | null) => void;
+  onSelectNode: (node: any | null) => void;
   focusedNodeId: string | null;
   selectedNodeId?: string | null;
   graphNodes: any[];
@@ -28,6 +29,7 @@ const API_BASE = 'http://localhost:8000/api';
 export default function Sidebar({
   repoId,
   onFocusNode,
+  onSelectNode,
   focusedNodeId,
   selectedNodeId = null,
   graphNodes,
@@ -47,7 +49,7 @@ export default function Sidebar({
   useEffect(() => {
     const fetchCycles = async () => {
       try {
-        const res = await fetch(`${API_BASE}/repositories/${repoId}/cycles`);
+        const res = await fetch(`${API_BASE}/repositories/${repoId}/cycles`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           setCycles(data);
@@ -69,7 +71,7 @@ export default function Sidebar({
     const delayDebounceFn = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(`${API_BASE}/repositories/${repoId}/search?q=${searchQuery}`);
+        const res = await fetch(`${API_BASE}/repositories/${repoId}/search?q=${encodeURIComponent(searchQuery)}`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data);
@@ -262,7 +264,7 @@ export default function Sidebar({
                 searchResults.map((node) => (
                   <button
                     key={node.id}
-                    onClick={() => onFocusNode(node.id)}
+                    onClick={() => onSelectNode(node)}
                     className="w-full text-left p-3 rounded-xl border border-slate-900 bg-slate-900/30 hover:bg-slate-900/60 hover:border-slate-800 transition-all flex flex-col gap-1 group cursor-pointer"
                   >
                     <div className="flex items-center justify-between">

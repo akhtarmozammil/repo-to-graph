@@ -7,6 +7,11 @@ tree-sitter
 tree-sitter-python
 tree-sitter-javascript
 tree-sitter-typescript
+tree-sitter-go
+tree-sitter-java
+tree-sitter-ruby
+tree-sitter-php
+tree-sitter-hcl
 
 gitpython==3.1.43
 networkx==3.3

@@ -32,7 +32,7 @@ export default function Dashboard() {
   // Fetch repositories and their latest scans
   const fetchData = async () => {
     try {
-      const res = await fetch(`${API_BASE}/repositories`);
+      const res = await fetch(`${API_BASE}/repositories`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to fetch repositories');
       const data: Repository[] = await res.json();
       setRepos(data);
@@ -48,7 +48,7 @@ export default function Dashboard() {
 
   const fetchLatestScan = async (repoId: string) => {
     try {
-      const res = await fetch(`${API_BASE}/repositories/${repoId}/scans`);
+      const res = await fetch(`${API_BASE}/repositories/${repoId}/scans`, { cache: 'no-store' });
       if (res.ok) {
         const data: Scan[] = await res.json();
         if (data.length > 0) {

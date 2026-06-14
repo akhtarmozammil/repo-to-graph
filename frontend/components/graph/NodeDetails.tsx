@@ -19,14 +19,15 @@ interface NodeDetailsProps {
 }
 
 interface ImpactData {
-  metrics: {
+  metrics?: {
     affected_files_count: number;
     affected_classes_count: number;
     affected_functions_count: number;
     impact_score: number;
   };
-  upstream: any[];
-  downstream: any[];
+  upstream?: any[];
+  downstream?: any[];
+  error?: string;
 }
 
 const API_BASE = 'http://localhost:8000/api';
@@ -51,7 +52,7 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
     const fetchImpact = async () => {
       setImpactLoading(true);
       try {
-        const res = await fetch(`${API_BASE}/repositories/${repoId}/impact?node_id=${node.id}`);
+        const res = await fetch(`${API_BASE}/repositories/${repoId}/impact?node_id=${encodeURIComponent(node.id)}`, { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           setImpact(data);
@@ -66,10 +67,11 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
 
     // Fetch File Content if it is a file/class/function/api with a file_path
     if (node.file_path) {
+      const filePath = node.file_path;
       const fetchFile = async () => {
         setSourceLoading(true);
         try {
-          const res = await fetch(`${API_BASE}/repositories/${repoId}/file-content?file_path=${node.file_path}`);
+          const res = await fetch(`${API_BASE}/repositories/${repoId}/file-content?file_path=${encodeURIComponent(filePath)}`, { cache: 'no-store' });
           if (res.ok) {
             const data = await res.json();
             
@@ -97,7 +99,7 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
     setAiLoading(true);
     setAiExplanation('');
     try {
-      const res = await fetch(`${API_BASE}/repositories/${repoId}/explain?node_id=${node.id}`);
+      const res = await fetch(`${API_BASE}/repositories/${repoId}/explain?node_id=${encodeURIComponent(node.id)}`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setAiExplanation(data.explanation);
@@ -193,7 +195,12 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
             <div className="text-center py-4 text-xs text-slate-500 flex items-center justify-center gap-2">
               <RefreshCw className="w-3.5 h-3.5 animate-spin" /> Analyzing blast radius...
             </div>
-          ) : impact ? (
+          ) : impact && impact.error ? (
+            <div className="p-3.5 bg-rose-950/20 border border-rose-900/30 text-rose-400 text-xs rounded-2xl text-left">
+              <span className="font-extrabold block uppercase tracking-wider text-[9px] mb-0.5 text-rose-300">Analysis Notice</span>
+              {impact.error}
+            </div>
+          ) : impact && impact.metrics ? (
             <div className="space-y-3">
               {/* Score card */}
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -231,10 +238,10 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
                 <div>
                   <span className="text-[9px] uppercase font-extrabold text-slate-500 block mb-1.5">Upstream (Who calls this?)</span>
                   <div className="max-h-[100px] overflow-y-auto space-y-1 bg-slate-950 p-2 rounded-xl border border-slate-900">
-                    {impact.upstream.length === 0 ? (
+                    {(impact.upstream || []).length === 0 ? (
                       <span className="text-[10px] text-slate-600 italic block">None</span>
                     ) : (
-                      impact.upstream.map((u) => (
+                      (impact.upstream || []).map((u) => (
                         <span key={u.id} className="text-[10px] text-slate-400 truncate block font-medium" title={u.name}>
                           {u.name}()
                         </span>
@@ -245,10 +252,10 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
                 <div>
                   <span className="text-[9px] uppercase font-extrabold text-slate-500 block mb-1.5">Downstream (Who I call)</span>
                   <div className="max-h-[100px] overflow-y-auto space-y-1 bg-slate-950 p-2 rounded-xl border border-slate-900">
-                    {impact.downstream.length === 0 ? (
+                    {(impact.downstream || []).length === 0 ? (
                       <span className="text-[10px] text-slate-600 italic block">None</span>
                     ) : (
-                      impact.downstream.map((d) => (
+                      (impact.downstream || []).map((d) => (
                         <span key={d.id} className="text-[10px] text-slate-400 truncate block font-medium" title={d.name}>
                           {d.name}()
                         </span>

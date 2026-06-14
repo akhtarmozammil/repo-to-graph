@@ -44,6 +44,9 @@ interface GraphCanvasProps {
   focusedNodeId: string | null;
   onFocusNode: (nodeId: string | null) => void;
   loading: boolean;
+  activeLegendFilter: string | null;
+  setActiveLegendFilter: (filter: string | null) => void;
+  onGraphReady?: () => void;
 }
 
 // ----------------- CUSTOM NODE COMPONENTS -----------------
@@ -229,7 +232,18 @@ export default function GraphCanvas(props: GraphCanvasProps) {
   );
 }
 
-function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focusedNodeId, onFocusNode, loading }: GraphCanvasProps) {
+function GraphCanvasContent({
+  nodes,
+  edges,
+  onSelectNode,
+  selectedNodeId,
+  focusedNodeId,
+  onFocusNode,
+  loading,
+  activeLegendFilter,
+  setActiveLegendFilter,
+  onGraphReady
+}: GraphCanvasProps) {
   const [rfNodes, setRfNodes] = useState<RFNode[]>([]);
   const [rfEdges, setRfEdges] = useState<Edge[]>([]);
 
@@ -262,11 +276,11 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
   // Fade out state for layout snap restoration
   const [isFadingOut, setIsFadingOut] = useState(false);
 
-  // Active category filter selected from the legend
-  const [activeLegendFilter, setActiveLegendFilter] = useState<string | null>(null);
-
   // Keep track of the last explored/scanned node
   const [lastExploredNode, setLastExploredNode] = useState<GraphNode | null>(null);
+
+  // Track if initial centering has finished to prevent selection useEffect from running prematurely
+  const hasFinishedInitialCenteringRef = useRef(false);
 
   useEffect(() => {
     const activeId = selectedNodeId || focusedNodeId;
@@ -311,7 +325,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
   // Helper to update viewport-aware virtualized graph
   const updateVirtualGraph = useCallback((viewport?: { x: number; y: number; zoom: number }) => {
-    if (focusedNodeId || selectedNodeId || activeLegendFilter) return;
+    if (focusedNodeId || selectedNodeId) return;
     if (originalNodesRef.current.length === 0) return;
 
     const vp = viewport || getViewport();
@@ -324,12 +338,23 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     const maxX = (width - vp.x) / vp.zoom + width / vp.zoom;
     const maxY = (height - vp.y) / vp.zoom + height / vp.zoom;
 
-    const visibleNodesList = spatialGridRef.current.query(minX, minY, maxX, maxY);
+    let visibleNodesList = spatialGridRef.current.query(minX, minY, maxX, maxY);
+    
+    // Performance guard to prevent browser freeze when zoomed out very far
+    if (visibleNodesList.length > 800) {
+      visibleNodesList = visibleNodesList.slice(0, 800);
+    }
+    
     const renderSet = new Set<string>();
 
     // Always render repository root node
     const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
     if (repoNode) renderSet.add(repoNode.id);
+
+    // If legend filter is active, make sure starting cluster is always available
+    if (activeLegendFilter) {
+      originalNodesRef.current.slice(0, 20).forEach(n => renderSet.add(n.id));
+    }
 
     visibleNodesList.forEach(node => {
       renderSet.add(node.id);
@@ -352,7 +377,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
 
   // Viewport change event listener
   const onMove = useCallback((event: any, viewport: { x: number; y: number; zoom: number }) => {
-    if (focusedNodeId || selectedNodeId || activeLegendFilter) return;
+    if (focusedNodeId || selectedNodeId) return;
 
     const width = containerSize.width || 800;
     const height = containerSize.height || 600;
@@ -420,85 +445,231 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
       return false;
     };
 
-    let currentY = 0;
-    const rowSpacing = 90;
+    // If legend filter is active, position nodes in a clean square grid layout
+    if (activeLegendFilter) {
+      const N = nodes.length;
+      const cols = Math.ceil(Math.sqrt(N));
+      const xSpacing = 220;
+      const ySpacing = 100;
 
-    // 1. Position Repo node
-    if (repo) {
-      pushUniqueNode({
-        id: repo.id,
-        type: 'custom',
-        position: { x: 300, y: -100 },
-        data: { name: repo.name, type: 'repo', isSelected: selectedNodeId === repo.id }
+      nodes.forEach((node, idx) => {
+        const row = Math.floor(idx / cols);
+        const col = idx % cols;
+        pushUniqueNode({
+          id: node.id,
+          type: 'custom',
+          position: { x: col * xSpacing, y: row * ySpacing },
+          data: {
+            name: node.name,
+            type: node.type,
+            isSelected: selectedNodeId === node.id,
+            filePath: node.file_path,
+            properties: node.properties
+          }
+        });
       });
-    }
+    } else {
+      let currentY = 0;
+      const colSpacing = 220;
+      const rowSpacing = 75;
+      const xApis = 0;
+      const xFolders = colSpacing;
+      const xFiles = colSpacing * 2;
+      const xClasses = colSpacing * 3;
+      const xFunctions = colSpacing * 4;
+      const xTables = colSpacing * 5;
 
-    // 2. Position APIs on the extreme left (X = 0)
-    apis.forEach((node, idx) => {
-      pushUniqueNode({
-        id: node.id,
-        type: 'custom',
-        position: { x: 0, y: idx * rowSpacing },
-        data: { name: node.name, type: 'api', isSelected: selectedNodeId === node.id }
-      });
-    });
-
-    // 3. Position Tables on the extreme right (X = 1500)
-    tables.forEach((node, idx) => {
-      pushUniqueNode({
-        id: node.id,
-        type: 'custom',
-        position: { x: 1500, y: idx * rowSpacing },
-        data: { name: node.name, type: 'table', isSelected: selectedNodeId === node.id }
-      });
-    });
-
-    // 4. Align Folders, Files, Classes, and Functions hierarchically (Left to Right)
-    // Group files by their parent folder
-    const folderFilesMap: Record<string, typeof files> = { "": [] };
-    
-    // Initialize empty arrays for folders
-    folders.forEach(f => {
-      folderFilesMap[f.file_path || ""] = [];
-    });
-
-    // Distribute files to their parent folders
-    files.forEach(file => {
-      const parentDir = file.file_path ? file.file_path.substring(0, file.file_path.lastIndexOf('/')) : '';
-      if (parentDir in folderFilesMap) {
-        folderFilesMap[parentDir].push(file);
-      } else {
-        folderFilesMap[""].push(file);
+      // 1. Position Repo node
+      if (repo) {
+        pushUniqueNode({
+          id: repo.id,
+          type: 'custom',
+          position: { x: xFolders, y: -150 },
+          data: {
+            name: repo.name,
+            type: 'repo',
+            isSelected: selectedNodeId === repo.id,
+            filePath: repo.file_path,
+            properties: repo.properties
+          }
+        });
       }
-    });
 
-    // Process folders and their files
-    folders.forEach((folder) => {
-      const folderFiles = folderFilesMap[folder.file_path || ""] || [];
+      // 2. Position APIs on the extreme left (X = 0)
+      apis.forEach((node, idx) => {
+        pushUniqueNode({
+          id: node.id,
+          type: 'custom',
+          position: { x: xApis, y: idx * rowSpacing },
+          data: {
+            name: node.name,
+            type: 'api',
+            isSelected: selectedNodeId === node.id,
+            filePath: node.file_path,
+            properties: node.properties
+          }
+        });
+      });
+
+      // 3. Position Tables on the extreme right (X = 1100)
+      tables.forEach((node, idx) => {
+        pushUniqueNode({
+          id: node.id,
+          type: 'custom',
+          position: { x: xTables, y: idx * rowSpacing },
+          data: {
+            name: node.name,
+            type: 'table',
+            isSelected: selectedNodeId === node.id,
+            filePath: node.file_path,
+            properties: node.properties
+          }
+        });
+      });
+
+      // 4. Align Folders, Files, Classes, and Functions hierarchically (Left to Right)
+      // Group files by their parent folder
+      const folderFilesMap: Record<string, typeof files> = { "": [] };
       
-      // Position folder node
-      pushUniqueNode({
-        id: folder.id,
-        type: 'custom',
-        position: { x: 300, y: currentY },
-        data: { name: folder.name, type: 'folder', isSelected: selectedNodeId === folder.id }
+      // Initialize empty arrays for folders
+      folders.forEach(f => {
+        folderFilesMap[f.file_path || ""] = [];
       });
 
-      if (folderFiles.length === 0) {
-        currentY += rowSpacing;
-        return;
-      }
+      // Distribute files to their parent folders
+      files.forEach(file => {
+        const parentDir = file.file_path ? file.file_path.substring(0, file.file_path.lastIndexOf('/')) : '';
+        if (parentDir in folderFilesMap) {
+          folderFilesMap[parentDir].push(file);
+        } else {
+          folderFilesMap[""].push(file);
+        }
+      });
 
-      // Position files under this folder
-      folderFiles.forEach((file) => {
+      // Process folders and their files
+      folders.forEach((folder) => {
+        const folderFiles = folderFilesMap[folder.file_path || ""] || [];
+        
+        // Position folder node
+        pushUniqueNode({
+          id: folder.id,
+          type: 'custom',
+          position: { x: xFolders, y: currentY },
+          data: {
+            name: folder.name,
+            type: 'folder',
+            isSelected: selectedNodeId === folder.id,
+            filePath: folder.file_path,
+            properties: folder.properties
+          }
+        });
+
+        if (folderFiles.length === 0) {
+          currentY += rowSpacing;
+          return;
+        }
+
+        // Position files under this folder
+        folderFiles.forEach((file) => {
+          pushUniqueNode({
+            id: file.id,
+            type: 'custom',
+            position: { x: xFiles, y: currentY },
+            data: {
+              name: file.name,
+              type: 'file',
+              isSelected: selectedNodeId === file.id,
+              filePath: file.file_path,
+              properties: file.properties
+            }
+          });
+
+          // Find classes and standalone functions for this file
+          const fileClasses = classes.filter(c => c.file_path === file.file_path);
+          const fileStandaloneFuncs = functions.filter(f => f.file_path === file.file_path && !f.properties?.class_name);
+
+          if (fileClasses.length === 0 && fileStandaloneFuncs.length === 0) {
+            currentY += rowSpacing;
+            return;
+          }
+
+          // Place classes
+          fileClasses.forEach((cls) => {
+            pushUniqueNode({
+              id: cls.id,
+              type: 'custom',
+              position: { x: xClasses, y: currentY },
+              data: {
+                name: cls.name,
+                type: 'class',
+                isSelected: selectedNodeId === cls.id,
+                filePath: cls.file_path,
+                properties: cls.properties
+              }
+            });
+
+            // Find class methods
+            const classMethods = functions.filter(f => f.file_path === file.file_path && f.properties?.class_name === cls.name);
+            if (classMethods.length === 0) {
+              currentY += rowSpacing;
+            } else {
+              classMethods.forEach((method) => {
+                const added = pushUniqueNode({
+                  id: method.id,
+                  type: 'custom',
+                  position: { x: xFunctions, y: currentY },
+                  data: {
+                    name: method.name,
+                    type: 'function',
+                    isSelected: selectedNodeId === method.id,
+                    filePath: method.file_path,
+                    properties: method.properties
+                  }
+                });
+                if (added) {
+                  currentY += rowSpacing;
+                }
+              });
+            }
+          });
+
+          // Place standalone functions
+          fileStandaloneFuncs.forEach((func) => {
+            const added = pushUniqueNode({
+              id: func.id,
+              type: 'custom',
+              position: { x: xFunctions, y: currentY },
+              data: {
+                name: func.name,
+                type: 'function',
+                isSelected: selectedNodeId === func.id,
+                filePath: func.file_path,
+                properties: func.properties
+              }
+            });
+            if (added) {
+              currentY += rowSpacing;
+            }
+          });
+        });
+      });
+
+      // Process files at the root level (no parent folder)
+      const rootFiles = folderFilesMap[""] || [];
+      rootFiles.forEach((file) => {
         pushUniqueNode({
           id: file.id,
           type: 'custom',
-          position: { x: 600, y: currentY },
-          data: { name: file.name, type: 'file', isSelected: selectedNodeId === file.id }
+          position: { x: xFiles, y: currentY },
+          data: {
+            name: file.name,
+            type: 'file',
+            isSelected: selectedNodeId === file.id,
+            filePath: file.file_path,
+            properties: file.properties
+          }
         });
 
-        // Find classes and standalone functions for this file
         const fileClasses = classes.filter(c => c.file_path === file.file_path);
         const fileStandaloneFuncs = functions.filter(f => f.file_path === file.file_path && !f.properties?.class_name);
 
@@ -507,16 +678,20 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           return;
         }
 
-        // Place classes
         fileClasses.forEach((cls) => {
           pushUniqueNode({
             id: cls.id,
             type: 'custom',
-            position: { x: 900, y: currentY },
-            data: { name: cls.name, type: 'class', isSelected: selectedNodeId === cls.id }
+            position: { x: xClasses, y: currentY },
+            data: {
+              name: cls.name,
+              type: 'class',
+              isSelected: selectedNodeId === cls.id,
+              filePath: cls.file_path,
+              properties: cls.properties
+            }
           });
 
-          // Find class methods
           const classMethods = functions.filter(f => f.file_path === file.file_path && f.properties?.class_name === cls.name);
           if (classMethods.length === 0) {
             currentY += rowSpacing;
@@ -525,8 +700,14 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
               const added = pushUniqueNode({
                 id: method.id,
                 type: 'custom',
-                position: { x: 1200, y: currentY },
-                data: { name: method.name, type: 'function', isSelected: selectedNodeId === method.id }
+                position: { x: xFunctions, y: currentY },
+                data: {
+                  name: method.name,
+                  type: 'function',
+                  isSelected: selectedNodeId === method.id,
+                  filePath: method.file_path,
+                  properties: method.properties
+                }
               });
               if (added) {
                 currentY += rowSpacing;
@@ -535,93 +716,116 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           }
         });
 
-        // Place standalone functions
         fileStandaloneFuncs.forEach((func) => {
           const added = pushUniqueNode({
             id: func.id,
             type: 'custom',
-            position: { x: 1200, y: currentY },
-            data: { name: func.name, type: 'function', isSelected: selectedNodeId === func.id }
+            position: { x: xFunctions, y: currentY },
+            data: {
+              name: func.name,
+              type: 'function',
+              isSelected: selectedNodeId === func.id,
+              filePath: func.file_path,
+              properties: func.properties
+            }
           });
           if (added) {
             currentY += rowSpacing;
           }
         });
       });
-    });
 
-    // Process files at the root level (no parent folder)
-    const rootFiles = folderFilesMap[""] || [];
-    rootFiles.forEach((file) => {
-      pushUniqueNode({
-        id: file.id,
-        type: 'custom',
-        position: { x: 600, y: currentY },
-        data: { name: file.name, type: 'file', isSelected: selectedNodeId === file.id }
-      });
+      // Fallback & Orphan/Disconnected Layout: Group leftover nodes in a compact 2D grid block
+      const leftoverNodes = nodes.filter((node) => !seenNodeIds.has(node.id));
+      if (leftoverNodes.length > 0) {
+        const N = leftoverNodes.length;
+        const cols = Math.ceil(Math.sqrt(N));
+        const gridXSpacing = 220;
+        const gridYSpacing = 100;
+        const startX = colSpacing; // Position relative to folder column
+        const startY = currentY + 150; // Place below the main hierarchical layout
 
-      const fileClasses = classes.filter(c => c.file_path === file.file_path);
-      const fileStandaloneFuncs = functions.filter(f => f.file_path === file.file_path && !f.properties?.class_name);
-
-      if (fileClasses.length === 0 && fileStandaloneFuncs.length === 0) {
-        currentY += rowSpacing;
-        return;
-      }
-
-      fileClasses.forEach((cls) => {
-        pushUniqueNode({
-          id: cls.id,
-          type: 'custom',
-          position: { x: 900, y: currentY },
-          data: { name: cls.name, type: 'class', isSelected: selectedNodeId === cls.id }
-        });
-
-        const classMethods = functions.filter(f => f.file_path === file.file_path && f.properties?.class_name === cls.name);
-        if (classMethods.length === 0) {
-          currentY += rowSpacing;
-        } else {
-          classMethods.forEach((method) => {
-            const added = pushUniqueNode({
-              id: method.id,
-              type: 'custom',
-              position: { x: 1200, y: currentY },
-              data: { name: method.name, type: 'function', isSelected: selectedNodeId === method.id }
-            });
-            if (added) {
-              currentY += rowSpacing;
+        leftoverNodes.forEach((node, idx) => {
+          const row = Math.floor(idx / cols);
+          const col = idx % cols;
+          pushUniqueNode({
+            id: node.id,
+            type: 'custom',
+            position: { x: startX + col * gridXSpacing, y: startY + row * gridYSpacing },
+            data: {
+              name: node.name,
+              type: node.type,
+              isSelected: selectedNodeId === node.id,
+              filePath: node.file_path,
+              properties: node.properties
             }
           });
-        }
-      });
-
-      fileStandaloneFuncs.forEach((func) => {
-        const added = pushUniqueNode({
-          id: func.id,
-          type: 'custom',
-          position: { x: 1200, y: currentY },
-          data: { name: func.name, type: 'function', isSelected: selectedNodeId === func.id }
         });
-        if (added) {
-          currentY += rowSpacing;
-        }
-      });
-    });
-
-    // Fallback: Position any leftover unplaced nodes
-    nodes.forEach((node) => {
-      if (!seenNodeIds.has(node.id)) {
-        const hash = node.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const xOffset = (hash % 10) * 15;
-        const yOffset = (hash % 5) * 15;
-        pushUniqueNode({
-          id: node.id,
-          type: 'custom',
-          position: { x: 600 + xOffset, y: currentY + yOffset },
-          data: { name: node.name, type: node.type, isSelected: selectedNodeId === node.id }
-        });
-        currentY += rowSpacing;
+        const numRows = Math.ceil(N / cols);
+        currentY = startY + numRows * gridYSpacing;
       }
-    });
+
+      // Adjust Y coordinates bottom-up to center parents vertically on their children
+      // Step 1: Center Classes on their methods
+      layoutNodes.forEach(node => {
+        const nodeData = node.data as any;
+        if (nodeData.type === 'class') {
+          const methods = layoutNodes.filter(n => {
+            const nData = n.data as any;
+            return (
+              nData.type === 'function' &&
+              nData.filePath === nodeData.filePath &&
+              nData.properties?.class_name === nodeData.name
+            );
+          });
+          if (methods.length > 0) {
+            const sumY = methods.reduce((sum, n) => sum + n.position.y, 0);
+            node.position.y = sumY / methods.length;
+          }
+        }
+      });
+
+      // Step 2: Center Files on their classes and functions
+      layoutNodes.forEach(node => {
+        const nodeData = node.data as any;
+        if (nodeData.type === 'file') {
+          const fileChildren = layoutNodes.filter(n => {
+            const nData = n.data as any;
+            return (
+              (nData.type === 'class' || nData.type === 'function') &&
+              nData.filePath === nodeData.filePath
+            );
+          });
+          if (fileChildren.length > 0) {
+            const sumY = fileChildren.reduce((sum, n) => sum + n.position.y, 0);
+            node.position.y = sumY / fileChildren.length;
+          }
+        }
+      });
+
+      // Step 3: Center Folders on their files
+      layoutNodes.forEach(node => {
+        const nodeData = node.data as any;
+        if (nodeData.type === 'folder') {
+          const folderFiles = layoutNodes.filter(n => {
+            const nData = n.data as any;
+            const nPath = nData.filePath || '';
+            const nodePath = nodeData.filePath || '';
+            return (
+              nData.type === 'file' &&
+              nPath &&
+              (nPath.substring(0, nPath.lastIndexOf('/')) === nodePath ||
+               (!nodePath && !nPath.includes('/')))
+            );
+          });
+          if (folderFiles.length > 0) {
+            const sumY = folderFiles.reduce((sum, n) => sum + n.position.y, 0);
+            node.position.y = sumY / folderFiles.length;
+          }
+        }
+      });
+
+    }
 
     setRfNodes(layoutNodes);
 
@@ -671,8 +875,12 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     const repoId = nodes[0]?.id.split(':')[0] || '';
     const graphStateKey = `${repoId}-${focusedNodeId || ''}-${nodes.length}`;
 
-    if (initialFitDoneRef.current === graphStateKey) return;
-    initialFitDoneRef.current = graphStateKey;
+    if (initialFitDoneRef.current !== graphStateKey) {
+      initialFitDoneRef.current = graphStateKey;
+      hasFinishedInitialCenteringRef.current = false; // Reset for new graph layout
+    }
+
+    if (hasFinishedInitialCenteringRef.current) return;
 
     const viewport = getViewport();
     const width = containerSize.width;
@@ -689,9 +897,14 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
     if (repoNode) renderSet.add(repoNode.id);
 
-    const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
-    if (folderNodes.length > 0) {
-      renderSet.add(folderNodes[0].id);
+    // If legend filter is active, preload starting nodes to center on them
+    if (activeLegendFilter) {
+      originalNodesRef.current.slice(0, 100).forEach(n => renderSet.add(n.id));
+    } else {
+      const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
+      if (folderNodes.length > 0) {
+        renderSet.add(folderNodes[0].id);
+      }
     }
 
     visible.forEach(node => {
@@ -711,36 +924,55 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     const timer = setTimeout(() => {
       if (focusedNodeId) {
         centerOnNode(focusedNodeId, originalNodesRef.current, 0);
-      } else if (lastExploredNode) {
-        centerOnNode(lastExploredNode.id, originalNodesRef.current, 350);
       } else {
-        const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
-        const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
-        const startingNodes = repoNode
-          ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
-          : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3));
-
-        if (originalNodesRef.current.length < 15) {
-          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
-        } else if (startingNodes.length > 0) {
-          fitView({
-            nodes: startingNodes,
-            padding: 0.3,
-            duration: 0,
-            maxZoom: 0.75
-          });
+        const repoNode = originalNodesRef.current.find(n => (n.data as any).type === 'repo');
+        if (repoNode && !activeLegendFilter) {
+          centerOnNode(repoNode.id, originalNodesRef.current, 0);
         } else {
-          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+          const folderNodes = originalNodesRef.current.filter(n => (n.data as any).type === 'folder');
+          const startingNodes = activeLegendFilter
+            ? originalNodesRef.current.slice(0, 40)
+            : (repoNode
+                ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
+                : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3)));
+
+          if (originalNodesRef.current.length < 15) {
+            fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+          } else if (startingNodes.length > 0) {
+            fitView({
+              nodes: startingNodes,
+              padding: 0.3,
+              duration: 0,
+              maxZoom: 0.75
+            });
+          } else {
+            fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
+          }
         }
       }
-    }, 50);
+
+      // Mark initial centering as done
+      hasFinishedInitialCenteringRef.current = true;
+
+      // Force recalculation of visible virtual nodes based on the newly centered coordinates
+      updateVirtualGraph();
+
+      if (onGraphReady) {
+        onGraphReady();
+      }
+    }, 150);
 
     return () => clearTimeout(timer);
-  }, [containerSize, nodes, focusedNodeId, getViewport, fitView, lastExploredNode]);
+  }, [containerSize, nodes, focusedNodeId, getViewport, fitView, lastExploredNode, activeLegendFilter, onGraphReady]);
 
   // Handle selectedNodeId changes (isolation mode and layout restorations)
   useEffect(() => {
     if (focusedNodeId || loading) {
+      return;
+    }
+
+    // Ignore selection triggers before initial centering has fully finished
+    if (!hasFinishedInitialCenteringRef.current) {
       return;
     }
 
@@ -758,7 +990,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
         if (originalNodesRef.current.length > 0) {
           updateVirtualGraph(getViewport());
           
-          if (lastExploredNode) {
+          if (lastExploredNode && !activeLegendFilter) {
             centerOnNode(lastExploredNode.id, originalNodesRef.current, 350);
           }
         }
@@ -825,12 +1057,12 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
           position = { x: origPos.x, y: origPos.y };
         } else if (incomingIds.includes(node.id)) {
           const idx = incomingIds.indexOf(node.id);
-          const yCenter = origPos.y + (idx - (incomingIds.length - 1) / 2) * 95;
-          position = { x: origPos.x - 300, y: yCenter };
+          const yCenter = origPos.y + (idx - (incomingIds.length - 1) / 2) * 75;
+          position = { x: origPos.x - 220, y: yCenter };
         } else if (outgoingIds.includes(node.id)) {
           const idx = outgoingIds.indexOf(node.id);
-          const yCenter = origPos.y + (idx - (outgoingIds.length - 1) / 2) * 95;
-          position = { x: origPos.x + 300, y: yCenter };
+          const yCenter = origPos.y + (idx - (outgoingIds.length - 1) / 2) * 75;
+          position = { x: origPos.x + 220, y: yCenter };
         }
 
         return {
@@ -872,12 +1104,7 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     setRfEdges(filteredEdges);
   }, [selectedNodeId, focusedNodeId]);
 
-  // Clear legend filter when selectedNodeId is active
-  useEffect(() => {
-    if (selectedNodeId) {
-      setActiveLegendFilter(null);
-    }
-  }, [selectedNodeId]);
+  // Kept legend filter active even when selectedNodeId changes
 
   const handleLegendClick = (type: string) => {
     const nextFilter = activeLegendFilter === type ? null : type;
@@ -891,99 +1118,18 @@ function GraphCanvasContent({ nodes, edges, onSelectNode, selectedNodeId, focuse
     }
 
     setTimeout(() => {
-      if (nextFilter) {
-        // Load all nodes so the column-filtering useMemo can run on the full set
-        if (originalNodesRef.current.length > 0) {
-          setRfNodes(originalNodesRef.current);
-          setRfEdges(originalEdgesRef.current);
-        }
-      } else {
-        // Restore virtualized view when legend filter is cleared
-        updateVirtualGraph(getViewport());
-      }
-      
       // Clear the ignore ref
       ignoreSelectionChangeRef.current = false;
 
-      // Apply the next filter
+      // Apply the next filter to trigger backend query
       setActiveLegendFilter(nextFilter);
     }, 80);
   };
 
-  // Filter and layout nodes/edges by legend selection
-  const { filteredNodes, filteredEdges } = useMemo(() => {
-    if (!activeLegendFilter) {
-      return { filteredNodes: rfNodes, filteredEdges: rfEdges };
-    }
-
-    // 1. Filter nodes of the active category
-    const baseNodes = rfNodes.filter((n) => n.data?.type === activeLegendFilter);
-    const nodeIds = new Set(baseNodes.map((n) => n.id));
-
-    // 2. Filter edges between these nodes
-    const baseEdges = rfEdges.filter(
-      (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
-    );
-
-    // If there are no nodes, return empty
-    if (baseNodes.length === 0) {
-      return { filteredNodes: [], filteredEdges: [] };
-    }
-
-    // 3. Compute dynamic layout for filtered nodes to prevent vertical overlapping
-    const layers: Record<string, number> = {};
-    baseNodes.forEach((n) => {
-      layers[n.id] = 0;
-    });
-
-    // Run passes to calculate layers
-    const maxPasses = Math.min(5, baseNodes.length);
-    for (let pass = 0; pass < maxPasses; pass++) {
-      let changed = false;
-      baseEdges.forEach((edge) => {
-        const srcLayer = layers[edge.source];
-        const tgtLayer = layers[edge.target];
-        if (tgtLayer <= srcLayer) {
-          layers[edge.target] = srcLayer + 1;
-          changed = true;
-        }
-      });
-      if (!changed) break;
-    }
-
-    // Group nodes by layer
-    const nodesByLayer: Record<number, typeof baseNodes> = {};
-    baseNodes.forEach((node) => {
-      const layer = layers[node.id] || 0;
-      if (!nodesByLayer[layer]) {
-        nodesByLayer[layer] = [];
-      }
-      nodesByLayer[layer].push(node);
-    });
-
-    const xSpacing = 300;
-    const ySpacing = 95;
-
-    const positionedNodes = baseNodes.map((node) => {
-      const layer = layers[node.id] || 0;
-      const nodesInLayer = nodesByLayer[layer];
-      const indexInLayer = nodesInLayer.findIndex((n) => n.id === node.id);
-
-      const totalHeight = (nodesInLayer.length - 1) * ySpacing;
-      const yOffset = -totalHeight / 2;
-
-      return {
-        ...node,
-        draggable: false, // Disable dragging in filtered view to preserve auto-layout
-        position: {
-          x: 150 + layer * xSpacing,
-          y: yOffset + indexInLayer * ySpacing,
-        },
-      };
-    });
-
-    return { filteredNodes: positionedNodes, filteredEdges: baseEdges };
-  }, [rfNodes, rfEdges, activeLegendFilter]);
+  // The backend already filters nodes and edges by node_type.
+  // We use rfNodes and rfEdges directly.
+  const filteredNodes = rfNodes;
+  const filteredEdges = rfEdges;
 
   // Keep track of the last filter we fitted view for, to avoid double-fitting on same value
   const lastFittedFilterRef = useRef<string | null | undefined>(undefined);
