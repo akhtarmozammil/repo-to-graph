@@ -238,7 +238,7 @@ export default function RepositoryExplorer({ params }: RepoPageProps) {
             </div>
           )}
 
-          {nodes.length === 0 && !loading ? (
+          {nodes.length === 0 && !loading && !activeLegendFilter ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 z-10 text-slate-400">
               <LayoutDashboard className="w-12 h-12 text-slate-800 mb-4 animate-bounce" />
               <p className="text-base font-bold mb-1 text-slate-300">Graph Not Generated</p>

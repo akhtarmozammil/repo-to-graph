@@ -282,6 +282,9 @@ function GraphCanvasContent({
   // Track if initial centering has finished to prevent selection useEffect from running prematurely
   const hasFinishedInitialCenteringRef = useRef(false);
 
+  // Track previous selected node ID to detect real selection changes vs initial load
+  const prevSelectedNodeIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     const activeId = selectedNodeId || focusedNodeId;
     if (activeId) {
@@ -323,9 +326,16 @@ function GraphCanvasContent({
     []
   );
 
+  // Keep mutable refs of selection/focus props to stabilize updateVirtualGraph dependencies
+  const selectedNodeIdRef = useRef(selectedNodeId);
+  const focusedNodeIdRef = useRef(focusedNodeId);
+
+  selectedNodeIdRef.current = selectedNodeId;
+  focusedNodeIdRef.current = focusedNodeId;
+
   // Helper to update viewport-aware virtualized graph
   const updateVirtualGraph = useCallback((viewport?: { x: number; y: number; zoom: number }) => {
-    if (focusedNodeId || selectedNodeId) return;
+    if (focusedNodeIdRef.current || selectedNodeIdRef.current) return;
     if (originalNodesRef.current.length === 0) return;
 
     const vp = viewport || getViewport();
@@ -371,7 +381,7 @@ function GraphCanvasContent({
 
     setRfNodes(filteredNodes);
     setRfEdges(filteredEdges);
-  }, [focusedNodeId, selectedNodeId, getViewport, containerSize, activeLegendFilter]);
+  }, [getViewport, containerSize, activeLegendFilter]);
 
   const lastCenterRef = useRef<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
 
@@ -960,6 +970,9 @@ function GraphCanvasContent({
       if (onGraphReady) {
         onGraphReady();
       }
+
+      // Restore visibility (end fade-out if active from a legend click transition)
+      setIsFadingOut(false);
     }, 150);
 
     return () => clearTimeout(timer);
@@ -968,17 +981,27 @@ function GraphCanvasContent({
   // Handle selectedNodeId changes (isolation mode and layout restorations)
   useEffect(() => {
     if (focusedNodeId || loading) {
+      prevSelectedNodeIdRef.current = selectedNodeId;
       return;
     }
 
     // Ignore selection triggers before initial centering has fully finished
     if (!hasFinishedInitialCenteringRef.current) {
+      prevSelectedNodeIdRef.current = selectedNodeId;
       return;
     }
+
+    const prevSelected = prevSelectedNodeIdRef.current;
+    prevSelectedNodeIdRef.current = selectedNodeId;
 
     if (!selectedNodeId) {
       if (ignoreSelectionChangeRef.current) {
         ignoreSelectionChangeRef.current = false;
+        return;
+      }
+
+      // ONLY trigger selection clear effects if we actually transitioned from a selected node to null!
+      if (!prevSelected) {
         return;
       }
 
@@ -988,25 +1011,37 @@ function GraphCanvasContent({
       // Wait 100ms for fade-out to complete before restoring layout/viewport
       const timerSnap = setTimeout(() => {
         if (originalNodesRef.current.length > 0) {
-          updateVirtualGraph(getViewport());
+          setRfNodes(originalNodesRef.current);
+          setRfEdges(originalEdgesRef.current);
           
           if (lastExploredNode && !activeLegendFilter) {
             centerOnNode(lastExploredNode.id, originalNodesRef.current, 350);
+          } else if (activeLegendFilter) {
+            fitView({ padding: 0.2, duration: 250, maxZoom: 0.75 });
           }
         }
         setIsFadingOut(false);
       }, 100);
 
-      return () => clearTimeout(timerSnap);
+      return () => {
+        if (selectedNodeIdRef.current !== selectedNodeId) {
+          clearTimeout(timerSnap);
+          setIsFadingOut(false);
+        }
+      };
     } else {
       // Node selected! Smoothly zoom in to the selection (no fade-out needed!)
       const timerFit = setTimeout(() => {
-        fitView({ padding: 0.2, duration: 250, maxZoom: 0.75 });
+        centerOnNode(selectedNodeId, originalNodesRef.current, 250);
       }, 50);
 
-      return () => clearTimeout(timerFit);
+      return () => {
+        if (selectedNodeIdRef.current !== selectedNodeId) {
+          clearTimeout(timerFit);
+        }
+      };
     }
-  }, [selectedNodeId, focusedNodeId, loading, fitView, getViewport, updateVirtualGraph]);
+  }, [selectedNodeId, focusedNodeId, loading, fitView, activeLegendFilter, lastExploredNode]);
 
   // Selection Effect: Handles filtering and positioning when selectedNodeId changes
   useEffect(() => {
@@ -1131,50 +1166,7 @@ function GraphCanvasContent({
   const filteredNodes = rfNodes;
   const filteredEdges = rfEdges;
 
-  // Keep track of the last filter we fitted view for, to avoid double-fitting on same value
-  const lastFittedFilterRef = useRef<string | null | undefined>(undefined);
 
-  // fitView when activeLegendFilter changes
-  useEffect(() => {
-    if (lastFittedFilterRef.current === activeLegendFilter) return;
-    lastFittedFilterRef.current = activeLegendFilter;
-
-    // Only snap/fade-in if we are currently transitioning
-    if (!isFadingOut) return;
-
-    const timerFit = setTimeout(() => {
-      if (activeLegendFilter) {
-        // Fit view specifically to the filtered nodes of this category to center on the cluster
-        if (filteredNodes.length > 0) {
-          fitView({
-            nodes: filteredNodes,
-            padding: 0.2,
-            duration: 0,
-            maxZoom: 0.75
-          });
-        }
-      } else {
-        // Filter cleared! Snap back to repo main folder starting point
-        const repoNode = originalNodesRef.current.find(n => n.data?.type === 'repo');
-        const folderNodes = originalNodesRef.current.filter(n => n.data?.type === 'folder');
-        const startingNodes = repoNode
-          ? [repoNode, ...(folderNodes.length > 0 ? [folderNodes[0]] : [])]
-          : (folderNodes.length > 0 ? [folderNodes[0]] : originalNodesRef.current.slice(0, 3));
-          
-        if (originalNodesRef.current.length < 15) {
-          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
-        } else if (startingNodes.length > 0) {
-          fitView({ nodes: startingNodes, padding: 0.3, duration: 0, maxZoom: 0.75 });
-        } else {
-          fitView({ padding: 0.15, duration: 0, maxZoom: 0.75 });
-        }
-      }
-
-      setIsFadingOut(false);
-    }, 120); // 120ms to allow React Flow to layout and measure updated DOM coordinates
-
-    return () => clearTimeout(timerFit);
-  }, [activeLegendFilter, fitView, isFadingOut, filteredNodes]);
 
   // Handle path highlighting on hover
   const renderedEdges = useMemo(() => {

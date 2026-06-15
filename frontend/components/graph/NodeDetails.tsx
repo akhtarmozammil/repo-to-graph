@@ -65,8 +65,8 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
     };
     fetchImpact();
 
-    // Fetch File Content if it is a file/class/function/api with a file_path
-    if (node.file_path) {
+    // Fetch File Content if it is a file/class/function/api with a file_path (excluding folders and repo nodes)
+    if (node.file_path && node.type !== 'folder' && node.type !== 'repo') {
       const filePath = node.file_path;
       const fetchFile = async () => {
         setSourceLoading(true);
@@ -269,7 +269,7 @@ export default function NodeDetails({ repoId, node, onFocusNode, onClose }: Node
         </div>
 
         {/* Source Code Snippet Viewer */}
-        {node.file_path && (
+        {node.file_path && node.type !== 'folder' && node.type !== 'repo' && (
           <div className="space-y-3 flex flex-col">
             <h3 className="text-slate-400 text-xs uppercase tracking-wider font-extrabold flex items-center gap-1.5">
               <Code className="w-4 h-4 text-cyan-400" /> Code Viewer
